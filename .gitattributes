@@ -1,0 +1,2 @@
+example/alpine/layer.squashfs filter=lfs diff=lfs merge=lfs -text
+example/alpinejava/layer.squashfs filter=lfs diff=lfs merge=lfs -text
