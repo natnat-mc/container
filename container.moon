@@ -263,12 +263,13 @@ info= (name) ->
 		io.write "\tnetworking: #{ini\get 'machine', 'networking'}\n"
 		io.write "\tnetworking bridge: #{ini\get 'machine', 'network-bridge'}\n" if 'bridge'==ini\get 'machine', 'networking'
 		io.write "\tnetworking zone: #{ini\get 'machine', 'network-zone'}\n" if 'zone'==ini\get 'machine', 'networking'
+		io.write "\tnetwork card used: #{ini\get 'machine', 'network-card'}\n" if ('ipvlan'==ini\get 'machine', 'networking') or 'macvlan'==ini\get 'machine', 'networking'
 		io.write "\trootfs: #{ini\get 'machine', 'rootfs'}\n"
 		io.write "\tarch: #{ini\get 'machine', 'arch'}\n"
 		io.write "\tlayers: #{table.concat (ini\getlist 'machine', 'layers'), ', '}\n"
 		io.write "\textra veth: #{table.concat (ini\getlist 'machine', 'network-extra'), ', '}\n" if ini\has 'machine', 'network-extra'
 		if ini\hassection 'binds'
-			io.write "\tBind mounts\n"
+			io.write "\tBind mounts:\n"
 			keys=[k for k in pairs ini.sections.binds]
 			table.sort keys
 			for dest in *keys
@@ -330,6 +331,10 @@ boot= (name) ->
 			table.insert nspawnargs, "--network-bridge=#{ini\getorerror 'machine', 'network-bridge'}"
 		when 'zone'
 			table.insert nspawnargs, "--network-zone=#{ini\getorerror 'machine', 'network-zone'}"
+		when 'ipvlan'
+			table.insert nspawnargs, "--network-ipvlan=#{ini\getorerror 'machine', 'network-card'}"
+		when 'macvlan'
+			table.insert nspawnargs, "--network-macvlan=#{ini\getorerror 'machine', 'network-card'}"
 		else
 			error "unknown networking type #{ini\get 'machine', 'networking'}"
 	if ini\hassection 'binds'
