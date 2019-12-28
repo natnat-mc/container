@@ -525,8 +525,8 @@ nspawnargs= (name, ini, machine, ...) ->
 		table.sort mountpoints
 		for mountpoint in *mountpoints
 			rel, ro, path=(ini\get 'binds', mountpoint)\match '^(%+?)(%-?)(.+)$'
-			cmd=if ro then 'bind-ro' else 'bind'
-			push "--#{cmd}=#{path}:#{mountpoint}"
+			cmd=if ro=='-' then 'bind-ro' else 'bind'
+			push "--#{cmd}=#{path}:#{rel}#{mountpoint}"
 	for i=1, select '#', ... -- extra arguments
 		push select i, ...
 	return args
