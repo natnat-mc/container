@@ -1,6 +1,8 @@
 #!/usr/bin/env moon
 
 VERBOSE=(os.getenv 'VERBOSE') or false
+CONTAINER_DIR=(os.getenv 'CONTAINER_DIR') or '/srv/containers'
+CONTAINER_WORKDIR=(os.getenv 'CONTAINER_WORKDIR') or '/tmp/containerwork'
 
 escape= (str) ->
 	'\"'..str\gsub('\\', '\\\\')\gsub('\'', '\\\'')\gsub('\"', '\\\"')..'\"'
@@ -80,7 +82,8 @@ class INI
 		@set section, key, table.concat list, ' '
 	
 	export: (filename) =>
-		fd, err=io.open filename, 'w'
+		fd=io.stdout
+		fd, err=io.open filename, 'w' if filename
 		error err unless fd
 		for section, data in pairs @sections
 			ok, err=fd\write "[#{section}]\n"
@@ -88,7 +91,7 @@ class INI
 			for key, value in pairs data
 				ok, err=fd\write "#{key} = #{value}\n"
 				error err unless ok
-		ok, err=fd\close!
+		ok, err=fd\close! if filename
 		error err unless ok
 	
 	@parse: (filename, defaultsection='general') =>
@@ -115,16 +118,163 @@ class INI
 				error "line #{lineno}: '#{line}' not understood"
 		return ini
 
-CONTAINER_DIR=(os.getenv 'CONTAINER_DIR') or '/srv/containers'
-CONTAINER_WORKDIR=(os.getenv 'CONTAINER_WORKDIR') or '/tmp/containerwork'
+class State
+	@load: () =>
+		ok=pcall () -> @ini=INI\parse "#{CONTAINER_WORKDIR}/state.ini"
+		@ini=INI! unless ok
+		@ini\addsection 'lock'
+		@ini\addsection 'uses'
+		@save! unless ok
+	
+	@save: () =>
+		pcall () -> @ini\export "#{CONTAINER_WORKDIR}/state.ini"
+	
+	@reentrant: 0
+	
+	@acquire: () =>
+		return if @reentrant!=0
+		while true
+			a=os.execute "mkdir \"#{CONTAINER_WORKDIR}/state.lock\" >/dev/null 2>&1"
+			break if a==true or a==0
+			run 'sleep', '1'
+		@reentrant+=1
+	@discard: () =>
+		@reentrant-=1
+		run 'rmdir', "#{CONTAINER_WORKDIR}/state.lock" if @reentrant==0
+	
+	@hooks: {}
+	
+	@unusedfn: (category, name, fn) =>
+		@hooks["unused@#{category}:#{name}"]=fn
+	
+	@use: (category, name) =>
+		@acquire!
+		@load!
+		key="#{category}:#{name}"
+		count=@ini\get 'uses', key, 0
+		@ini\set 'uses', key, count+1
+		@save!
+		@discard!
+	
+	@release: (category, name) =>
+		@acquire!
+		@load!
+		key="#{category}:#{name}"
+		count=@ini\get 'uses', key
+		count-=1
+		count=nil if count==0
+		@ini\set 'uses', key, count
+		@save!
+		unless count
+			unusedhook=@hooks["unused@#{category}:#{name}"]
+			if unusedhook
+				ok, err=pcall unusedhook
+				io.stderr\write "Error in unused hook for #{category} #{name}: #{err}" unless ok
+		@discard!
+	
+	@uses: (category, name) =>
+		@acquire!
+		@load!
+		key="#{category}:#{name}"
+		@discard!
+		return @ini\get 'uses', key, 0
+	
+	@ownlocks: {}
+	
+	@lock: (category, name) =>
+		@acquire!
+		@load!
+		key="#{category}:#{name}"
+		if @ini\get 'lock', key, false
+			@discard!
+			error "Failed to lock #{category} #{name}"
+		@ini\set 'lock', key, true
+		@ownlocks[key]=true
+		@save!
+		@discard!
+	
+	@unlock: (category, name) =>
+		key="#{category}:#{name}"
+		error "lock not owned #{category} #{name}" unless @ownlocks[key]
+		@acquire!
+		@load!
+		@ini\set 'lock', key, nil
+		@ownlocks[key]=nil
+		@save!
+		@discard!
+	
+	@cleanup: () =>
+		needscleanup=next @ownlocks
+		unless needscleanup
+			if @ini
+				for use, count in pairs @ini.sections.uses
+					needscleanup=true if count==0
+		return unless needscleanup
+		@acquire!
+		@load!
+		for lock in pairs @ownlocks
+			@ini\set 'lock', lock, nil
+		for use, count in pairs @ini.sections.uses
+			if count==0
+				@ini\set 'uses', use, nil
+				category, name=use\match '^(.-):(.+)$'
+				unusedhook=@hooks["unused@#{category}:#{name}"]
+				if unusedhook
+					ok, err=pcall unusedhook
+					io.stderr\write "Error in unused hook for #{category} #{name}: #{err}" unless ok
+		@save!
+		@discard!
 
+class Command
+	@commands: {}
+	
+	@get: (name) => @commands[name] or error "No such command #{name}"
+	
+	new: (@name) =>
+		@args={}
+		@@commands[@name]=@
+	
+	usage: () =>
+		fmtarg=(arg) ->
+			if arg.required
+				return "<#{arg[1]}>"
+			else
+				if arg.multiple
+					return "[#{arg[1]}...]"
+				else
+					return "[#{arg[1]}]"
+		"Usage: #{arg[0]} #{@name} #{table.concat [fmtarg arg for arg in *@args], " "}"
+
+-- get a container INI by name
+getini= (name, options={}) ->
+	error "no name given" unless name
+	ok, ini=pcall INI\parse, "#{CONTAINER_DIR}/#{name}/config.ini"
+	error "container #{name} not found" unless ok
+	error "container #{name} doesn't have a machine" if options.machine and not ini\hassection 'machine'
+	error "container #{name} doesn't have a layer" if options.layer and not ini\hassection 'layer'
+	return ini
+
+-- get all containers
+getallini= (matching={}) ->
+	containers={}
+	for name in *ls CONTAINER_DIR
+		pcall () ->
+			containers[name]=getini name, matching
+	return containers
+
+-- mount a layer
+-- adds one use to the container
 mountlayer= (name) ->
-	ini=INI\parse "#{CONTAINER_DIR}/#{name}/config.ini"
-	root="#{CONTAINER_WORKDIR}/layers/#{name}/mountroot"
+	State\lock 'container', name
+	
+	-- get layer information
+	ini=getini name, layer: true
+	root="#{CONTAINER_WORKDIR}/layers/#{name}"
 	writable=ini\get 'layer', 'writable'
 	workdir=if writable then "#{root}/workdir" else nil
 	rootfs=if writable then "#{root}/rootfs" else root
-	unless mounted root
+	
+	unless mounted root -- mount it if it isn't already
 		ensuredir root
 		t, f=(ini\get 'layer', 'type'), "#{CONTAINER_DIR}/#{name}/#{ini\get 'layer', 'filename'}"
 		switch t
@@ -136,17 +286,32 @@ mountlayer= (name) ->
 				runorerror 'mount', f, root, '-o', "bind,#{writable and 'rw' or 'ro'}"
 			else
 				error "unknown fs type #{t}"
-		if writable
+		
+		if writable -- if the layer is writable, we need a workdir and rootfs
 			ensuredir workdir if workdir
 			ensuredir rootfs
+		
+		State\use 'container', name
+	
+	-- manage layer usage
+	State\unusedfn 'layer', root, () ->
+		umount root
+		State\release 'container', name
+	
+	-- return our layer
+	State\unlock 'container', name
 	return {:root, :workdir, :rootfs, :writable}
 
+-- mount a tmpfs
 mounttmpfs= (name) ->
+	-- find an unused spot
 	tmpfsdir="#{CONTAINER_WORKDIR}/tmpfs"
 	i=0
 	while isdir "#{tmpfsdir}/#{name}-#{i}"
 		i+=1
 	root="#{tmpfsdir}/#{name}-#{i}"
+	
+	-- create tmpfs
 	writable=true
 	workdir="#{root}/workdir"
 	rootfs="#{root}/rootfs"
@@ -154,253 +319,420 @@ mounttmpfs= (name) ->
 	runorerror 'mount', '-t', 'tmpfs', "tmpfs-#{name}", root
 	ensuredir workdir
 	ensuredir rootfs
+	
+	-- manage layer usage
+	State\unusedfn 'layer', root, () ->
+		umount root
+	
+	-- return our tmpfs layer
 	return {:root, :workdir, :rootfs, :writable}
 
+-- merge layer into a merge point
+-- adds one use to all the layers
 mergelayers= (list, name) ->
+	-- find an unused spot
 	mergedir="#{CONTAINER_WORKDIR}/merge"
 	i=0
 	while isdir "#{mergedir}/#{name}-#{i}"
 		i+=1
 	root="#{mergedir}/#{name}-#{i}"
+	
+	-- merge layers
 	ensuredir root
 	if #list==1
+		-- a merge with a single layer can be done with a bind
 		runorerror 'mount', '-o', 'bind', list[1].workdir, root
-		return root
-	local options
-	if list[#list].writable
-		options="lowerdir=#{table.concat [list[i].rootfs for i=#list-1, 1, -1], ':'},upperdir=#{list[#list].rootfs},workdir=#{list[#list].workdir}"
+		State\use 'layer', list[1].root
 	else
-		options="lowerdir=#{table.concat [list[i].rootfs for i=#list, 1, -1], ':'}"
-	runorerror 'mount', '-t', 'overlay', 'overlay', root, '-o', options
+		local options
+		if list[#list].writable
+			options="lowerdir=#{table.concat [list[i].rootfs for i=#list-1, 1, -1], ':'},upperdir=#{list[#list].rootfs},workdir=#{list[#list].workdir}"
+		else
+			options="lowerdir=#{table.concat [list[i].rootfs for i=#list, 1, -1], ':'}"
+		runorerror 'mount', '-t', 'overlay', 'overlay', root, '-o', options
+		for layer in *list
+			State\use 'layer', layer.root
+	
+	-- manage merge usage
+	State\unusedfn 'merge', root, () ->
+		umount root
+		for layer in *list
+			State\release 'layer', layer.root
+	
+	-- return our merge root
 	return root
 
-mountmachine= (name, ini) ->
+-- mount a machine entierely
+-- adds one use to the merge
+mountmachine= (name) ->
+	-- read machine ini
+	ini=getini name, machine: true
+	
+	-- mount all container layers
 	layerdirs={}
-	tmpfs=nil
 	for layer in *ini\getlist 'machine', 'layers'
 		table.insert layerdirs, mountlayer layer
+	
+	-- mount top layer if present
 	switch ini\get 'machine', 'rootfs'
 		when 'layer'
 			nil -- rootfs is the layer itself
 		when 'tmpfs'
-			tmpfs=mounttmpfs ini\get 'machine', 'hostname'
+			tmpfs=mounttmpfs name
 			table.insert layerdirs, tmpfs
 		else
 			error "Illegal top layer type"
-	rootfs=mergelayers layerdirs, ini\get 'machine', 'hostname'
-	return layerdirs, rootfs, tmpfs
+	
+	-- merge layers
+	rootfs=mergelayers layerdirs, name
+	State\use 'merge', rootfs
+	
+	-- manage machine usage
+	State\unusedfn 'machine', rootfs, () ->
+		State\release 'merge', rootfs
+	
+	-- return our machine rootfs
+	return rootfs
 
-help=
-	general: {
-		"#{arg[0]}, a layered container helper"
-		"subcommands: help, list, info, boot, mount, derive, freeze"
-		"env CONTAINER_DIR: the directory in which the containers are searched"
-		"env CONTAINER_WORKDIR: the directory in which the containers are mounted/booted"
-	}
-	list: {
-		"#{arg[0]} list: list all layers and containers"
-	}
-	info: {
-		"#{arg[0]} info <layer|machine>: show layer/machine info"
-	}
-	boot: {
-		"#{arg[0]} boot <machine>: boot an instance of a container"
-		"containers with a tmpfs topmost layer can be booted multiple times"
-	}
-	mount: {
-		"#{arg[0]} mount <machine>: mount an instance of a container"
-		"this commands only mounts the container and doesn't start it or help you unmount it"
-	}
-	derive: {
-		"#{arg[0]} derive <source> <name>: create a container deriving from `source` called `name`"
-		"the new container will share the same layers as the source, plus a directory layer and the same settings as the source layer"
-	}
-	freeze: {
-		"#{arg[0]} freeze <layer>: freeze a layer"
-		"this command freezes a layer so that its fs becomes a readonly squashfs filesystem"
-		"if the layer has an associated machine, the machine gets updated to use a tmpfs top layer"
-	}
-help=setmetatable help, {
-	__call: (section='general') =>
-		if @[section]
-			for line in *@[section]
-				io.write line
-				io.write '\n'
-		else
-			io.stderr\write "No help found for #{section}\n"
-			os.exit 1
-		os.exit 0
-}
+-- load default values to ini
+loaddefaults= (name, ini) ->
+	def= (k, v, def) ->
+		if nil==ini\get k, v
+			ini\set k, v, def
+	def 'machine', 'hostname', name
+	def 'machine', 'layers', name
+	def 'machine', 'rootfs', 'layer'
+	def 'machine', 'networking', 'host'
+	def 'machine', 'capabilities', 'auto'
+	def 'machine', 'resolv-conf', 'container'
+	def 'machine', 'timezone', 'container'
+	def 'machine', 'interactive', true
 
-list= () ->
-	dirs={name, INI\parse "#{CONTAINER_DIR}/#{name}/config.ini" for name in *ls CONTAINER_DIR when isfile "#{CONTAINER_DIR}/#{name}/config.ini"}
-	layers={name, ini for name, ini in pairs dirs when ini\hassection 'layer'}
-	machines={name, ini for name, ini in pairs dirs when ini\hassection 'machine'}
-	if next layers
-		io.write "Layers:\n"
-		io.write "\t#{name}: #{ini\get 'layer', 'type'} [#{if ini\get 'layer', 'writable' then 'RW' else 'RO'}]\n" for name, ini in pairs layers
-	if next machines
-		io.write "Machines:\n"
-		io.write "\t#{name}\n" for name in pairs machines
-
-info= (name) ->
-	unless name
-		io.stderr\write "Usage: #{arg[0]} info <layer|machine>\n"
-		os.exit 1
-	ok, ini=pcall INI\parse, "#{CONTAINER_DIR}/#{name}/config.ini"
-	unless ok
-		io.stderr\write ini
-		io.stderr\write '\n'
-		os.exit 1
+-- checks config file
+knownvalid={}
+checkconfig= (name, ini) ->
+	return if knownvalid[name]
+	
+	cerr= (s, k, e) ->
+		error "in config for #{name}: section #{s}, key #{k}: #{e}"
+	ctype= (s, k, t) ->
+		a=type ini\get s, k
+		cerr s, k, "type is #{a}, should be #{t}" unless a==t
+	cvals= (s, k, a) ->
+		r=ini\get s, k
+		o=false
+		for v in *a
+			if r==v
+				o=true
+				break
+		cerr s, k, "value #{r} is not allowed, should be one of #{table.concat a, ', '}" unless o
+	cregm= (s, k, m) ->
+		ctype s, k, 'string'
+		r=ini\get s, k
+		cerr s, k, "value #{r} doesn't match pattern #{m}" unless r\match m
+	ctest= (fn) ->
+		ok, err=pcall fn
+		error "in config for #{name}: #{err}" unless ok
+	
 	if ini\hassection 'layer'
-		io.write "Layer info:\n"
-		io.write "\tread/write: [#{if ini\get 'layer', 'writable' then "RW" else "RO"}]\n"
-		io.write "\ttype: #{ini\get 'layer', 'type'}\n"
-		io.write "\tfilename: #{ini\get 'layer', 'filename'}\n"
+		ctype 'layer', 'writable', 'boolean'
+		ctype 'layer', 'filename', 'string'
+		cvals 'layer', 'type', {'ext', 'squashfs', 'directory'}
+	
 	if ini\hassection 'machine'
-		io.write "Machine info:\n"
-		io.write "\thostname: #{ini\get 'machine', 'hostname'}\n"
-		io.write "\tnetworking: #{ini\get 'machine', 'networking'}\n"
-		io.write "\tnetworking bridge: #{ini\get 'machine', 'network-bridge'}\n" if 'bridge'==ini\get 'machine', 'networking'
-		io.write "\tnetworking zone: #{ini\get 'machine', 'network-zone'}\n" if 'zone'==ini\get 'machine', 'networking'
-		io.write "\tnetwork card used: #{ini\get 'machine', 'network-card'}\n" if ('ipvlan'==ini\get 'machine', 'networking') or 'macvlan'==ini\get 'machine', 'networking'
-		io.write "\trootfs: #{ini\get 'machine', 'rootfs'}\n"
-		io.write "\tarch: #{ini\get 'machine', 'arch'}\n"
-		io.write "\tlayers: #{table.concat (ini\getlist 'machine', 'layers'), ', '}\n"
-		io.write "\textra veth: #{table.concat (ini\getlist 'machine', 'network-extra'), ', '}\n" if ini\has 'machine', 'network-extra'
-		if ini\hassection 'binds'
-			io.write "\tBind mounts:\n"
-			keys=[k for k in pairs ini.sections.binds]
-			table.sort keys
-			for dest in *keys
-				src=ini\get 'binds', dest
-				internal='+'==src\sub 1, 1
-				src=src\sub 2 if internal
-				ro='-'==src\sub 1, 1
-				src=src\sub 2 if ro
-				io.write "\t\t#{dest}: #{src} (#{internal and "internal" or "external"}) [#{ro and "RO" or "RW"}]\n"
-
-mount= (name) ->
-	unless name
-		io.stderr\write "Usage: #{arg[0]} mount <machine>\n"
-		os.exit 1
-	ok, ini=pcall INI\parse, "#{CONTAINER_DIR}/#{name}/config.ini"
-	unless ok
-		io.stderr\write ini
-		io.stderr\write '\n'
-		os.exit 1
-	unless ini\hassection 'machine'
-		io.stderr\write "Container is layer only: can't mount it\n"
-		os.exit 1
-	layerdirs, rootfs, tmpfs=mountmachine name, ini
-	io.write "layers:\n"
-	for layer in *layerdirs
-		io.write "\t#{layer.root} [#{layer.writable and "RW" or "RO"}]\n"
-		io.write "\t\tworkdir: #{layer.workdir}\n" if layer.workdir
-		io.write "\t\trootfs: #{layer.rootfs}\n"
-	if tmpfs
-		io.write "tmpfs: #{tmpfs.root} [#{tmpfs.writable and "RW" or "RO"}]\n"
-		io.write "\tworkdir: #{tmpfs.workdir}\n" if tmpfs.workdir
-		io.write "\trootfs: #{tmpfs.rootfs}\n"
-	io.write "rootfs: #{rootfs}\n"
-
-boot= (name) ->
-	unless name
-		io.stderr\write "Usage: #{arg[0]} boot <machine>\n"
-		os.exit 1
-	ok, ini=pcall INI\parse, "#{CONTAINER_DIR}/#{name}/config.ini"
-	unless ok
-		io.stderr\write ini
-		io.stderr\write '\n'
-		os.exit 1
-	unless ini\hassection 'machine'
-		io.stderr\write "Container is layer only: can't boot it\n"
-		os.exit 1
-	layerdirs, rootfs, tmpfs=mountmachine name, ini
-	nspawnargs={
-		'-b'
-		'-D', rootfs
-		'--timezone=bind'
-	}
-	switch ini\get 'machine', 'networking'
-		when 'passthrough'
-			table.insert nspawnargs, '--resolv-conf=bind-host'
-		when 'veth'
-			table.insert nspawnargs, '--network-veth'
-		when 'bridge'
-			table.insert nspawnargs, "--network-bridge=#{ini\getorerror 'machine', 'network-bridge'}"
-		when 'zone'
-			table.insert nspawnargs, "--network-zone=#{ini\getorerror 'machine', 'network-zone'}"
-		when 'ipvlan'
-			table.insert nspawnargs, "--network-ipvlan=#{ini\getorerror 'machine', 'network-card'}"
-		when 'macvlan'
-			table.insert nspawnargs, "--network-macvlan=#{ini\getorerror 'machine', 'network-card'}"
-		else
-			error "unknown networking type #{ini\get 'machine', 'networking'}"
+		ctype 'machine', 'hostname', 'string'
+		ctype 'machine', 'arch', 'string'
+		ctest () ->
+			for layer in *ini\getlist 'machine', 'layers'
+				lini=getini layer
+				error "layer #{layer} has no layer" unless lini\hassection 'layer'
+				unless layer==name
+					loaddefaults layer, lini
+					checkconfig layer, lini
+		cvals 'machine', 'rootfs', {'layer', 'tmpfs'}
+		cvals 'machine', 'networking', {'host', 'private'}
+		cvals 'machine', 'capabilities', {'auto', 'all', 'list'}
+		ctest () ->
+			return unless 'list'==ini\get 'machine', 'capabilities'
+			error "no capabilities section" unless ini\hassection 'capabilities'
+		cvals 'machine', 'resolv-conf', {'host', 'copy', 'container'}
+		cvals 'machine', 'timezone', {'host', 'copy', 'container'}
+		ctype 'machine', 'interactive', 'boolean'
+	
 	if ini\hassection 'binds'
-		keys=[key for key in pairs ini.sections.binds]
-		table.sort keys
-		for dest in *keys
-			src=ini\get 'binds', dest
-			internal='+'==src\sub 1, 1
-			src=src\sub 2 if internal
-			ro='-'==src\sub 1, 1
-			src=src\sub 2 if ro
-			table.insert nspawnargs, "--#{ro and 'bind-ro' or 'bind'}=#{internal and '+' or ''}#{src\gsub ':', '\\:'}:#{dest\gsub ':', '\\:'}"
-	runorerror 'systemd-nspawn', nspawnargs
-	umount rootfs
-	umount tmpfs.root if tmpfs
-
-derive= (source, name) ->
-	error "Usage:\t#{arg[0]} derive <source> <name>" unless source and name
-	ini=INI\parse "#{CONTAINER_DIR}/#{source}/config.ini"
-	error "container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
-	error "source container must contain a machine" unless ini\hassection 'machine'
-	ensuredir "#{CONTAINER_DIR}/#{name}"
-	ini\set 'layer', 'filename', 'layer.dir'
-	ini\set 'layer', 'type', 'directory'
-	ini\set 'layer', 'writable', true
-	ini\set 'machine', 'rootfs', 'layer'
-	ini\append 'machine', 'layers', name
-	ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
-	ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
-
-freeze= (name) ->
-	error "Usage:\t#{arg[0]} freeze <name>" unless name
-	dir="#{CONTAINER_DIR}/#{name}"
-	ini=INI\parse "#{dir}/config.ini"
-	error "no layer in container" unless ini\hassection 'layer'
-	error "layer is already frozen" if 'squashfs'==ini\get 'layer', 'type'
-	root="#{CONTAINER_WORKDIR}/layers/#{name}/mountroot"
-	error "layer is already mounted" if mounted root
-	layer=mountlayer name
-	runorerror 'mksquashfs', layer.rootfs, "#{dir}/layer.squashfs", '-comp', 'xz', '-Xdict-size', '100%'
-	umount layer.root
-	runorerror 'rm', '-rf', "#{dir}/#{ini\get 'layer', 'filename'}"
-	ini\set 'layer', 'filename', 'layer.squashfs'
-	ini\set 'layer', 'type', 'squashfs'
-	ini\set 'layer', 'writable', false
-	if ini\hassection 'machine'
-		ini\set 'machine', 'rootfs', 'tmpfs'
-	ini\export "#{dir}/config.ini"
+		for bind in pairs ini.sections.binds
+			cregm 'binds', bind, '^%+?%-?/.*'
+	
+	if ini\hassection 'capabilities'
+		for capability in pairs ini.sections.capabilities
+			cvals 'capabilities', capability, {'grant', 'drop'}
+	
+	knownvalid[name]=true
 
 
-printusage= () ->
-		io.stderr\write "Usage:\t#{arg[0]} <subcommand>\n"
-		io.stderr\write "\t#{arg[0]} help\n"
-		os.exit 1
+-- creates nspawn arglist
+nspawnargs= (name, ini, machine, ...) ->
+	-- build the nspawn command
+	args={}
+	push= (arg) -> table.insert args, arg
+	
+	do -- use the machine rootfs
+		push '-D'
+		push machine
+	do -- set machine interactivity
+		push "--console=#{if ini\get 'machine', 'interactive' then 'interactive' else 'passive'}"
+	switch ini\get 'machine', 'resolv-conf' -- set resolv-conf
+		when 'host' then push '--resolv-conf=bind-host'
+		when 'container' then push '--resolv-conf=off'
+		when 'copy' then push '--resolv-conf=copy-host'
+	switch ini\get 'machine', 'timezone' -- set timezone
+		when 'host' then push '--timezone=bind'
+		when 'container' then push '--timezone=off'
+		when 'copy' then push '--timezone=copy'
+	do -- set machine hostname
+		push "--hostname=#{ini\get 'machine', 'hostname'}"
+	switch ini\get 'machine', 'networking' -- set machine networking
+		when 'host'
+			nil -- nothing to do
+		when 'private'
+			push '--private-network'
+			for interface in *ini\getlist 'networking', 'interfaces' -- assign interfaces
+				push "--network-interface=#{interface}"
+			for macvlan in *ini\getlist 'networking', 'macvlan' -- add macvlan interfaces
+				push "--network-macvlan=#{macvlan}"
+			for ipvlan in *ini\getlist 'networking', 'ipvlan' -- add ipvlan interfaces
+				push "--network-ipvlan=#{ipvlan}"
+			for veth in *ini\getlist 'network', 'veth' -- add veth interfaces
+				push "--network-veth-extra=#{veth}"
+			if bridge=ini\get 'network', 'bridge' -- add bridge interface
+				push "--network-bridge=#{bridge}"
+			if zone=ini\get 'network', 'zone' -- add zone interface
+				push "--network-zone=#{zone}"
+	switch ini\get 'machine', 'capabilities' -- set machine capabilites
+		when 'auto'
+			nil -- nothing to do
+		when 'all'
+			push '--capability=all'
+		when 'list'
+			grant=[capability for capability, action in pairs ini.sections.capabilities when action=='grant']
+			drop=[capability for capability, action in pairs ini.sections.capabilities when action=='drop']
+			if #grant!=0
+				push "--capability=#{table.concat grant, ','}"
+			if #drop!=0
+				push "--drop-capability=#{table.concat drop, ','}"
+	if ini\hassection 'binds' -- add bind mounts
+		mountpoints=[key for key in pairs ini.sections.binds]
+		table.sort mountpoints
+		for mountpoint in *mountpoints
+			rel, ro, path=(ini\get 'binds', mountpoint)\match '^(%+?)(%-?)(.+)$'
+			cmd=if ro then 'bind-ro' else 'bind'
+			push "--#{cmd}=#{path}:#{mountpoint}"
+	for i=1, select '#', ... -- extra arguments
+		push select i, ...
+	return args
 
-fn=switch (table.remove arg, 1) or 'help'
-	when 'help' then help
-	when 'list' then list
-	when 'info' then info
-	when 'mount' then mount
-	when 'boot' then boot
-	when 'derive' then derive
-	when 'freeze' then freeze
-	else printusage
+with Command 'list'
+	.args={}
+	.desc="Lists all containers"
+	.fn=() ->
+		-- list containers
+		containers=getallini!
+		unless next containers
+			io.write "No containers found\n"
+			return
+		
+		-- pretty-print result
+		longestname=0
+		for name in pairs containers
+			longestname=#name if #name>longestname
+		for name, ini in pairs containers
+			io.write name
+			io.write string.rep ' ', (longestname-#name+1)
+			if ini\hassection 'layer'
+				io.write "[layer] "
+			else
+				io.write "        "
+			if ini\hassection 'machine'
+				io.write "[machine]"
+			io.write "\n"
+
+with Command 'info'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Shows container info"
+	.fn=(name) ->
+		-- dump container INI to stdout
+		-- I could pretty-print this, but ¯\_(ツ)_/¯
+		(getini name)\export!
+
+with Command 'edit'
+	.args={
+		{'name', required: true}
+		{'editor', required: false}
+	}
+	.desc="Edits a container config file"
+	.fn=(name, editor) ->
+		-- make sure the container exists
+		getini name
+		
+		-- find an editor
+		editor=os.getenv 'EDITOR' unless editor
+		editor=os.getenv 'VISUAL' unless editor
+		editor='vi' unless editor
+		
+		-- edit the file
+		run editor, "#{CONTAINER_DIR}/#{name}/config.ini"
+
+with Command 'boot'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Boots a container"
+	.fn=(name) ->
+		ini=getini name, {machine: true}
+		
+		-- populate default values
+		loaddefaults name, ini
+		checkconfig name, ini
+		
+		-- mount the machine
+		machine=mountmachine name
+		State\use 'machine', machine
+		
+		ok, err=pcall () ->
+			-- get our nspawn arguments
+			args=nspawnargs name, ini, machine, '-b'
+			
+			-- boot our container
+			runorerror 'systemd-nspawn', args
+		
+		-- release our machine
+		State\release 'machine', machine
+		
+		-- exit
+		error err unless ok
+
+with Command 'run'
+	.args={
+		{'name', required: true}
+		{'cmd', required: true}
+		{'args', required: false, multiple: true}
+	}
+	.desc="Runs a command in a container"
+	.fn=(name, cmd, ...) ->
+		ini=getini name, {machine: true}
+		
+		-- populate default values
+		loaddefaults name, ini
+		checkconfig name, ini
+		
+		-- mount the machine
+		machine=mountmachine name
+		State\use 'machine', machine
+		
+		-- get our nspawn arguments
+		args=nspawnargs name, ini, machine, '-a', cmd, ...
+		
+		-- run our command in our container
+		ok, err=pcall () ->
+			runorerror 'systemd-nspawn', args
+		
+		-- release our machine
+		State\release 'machine', machine
+		
+		-- exit
+		error err unless ok
+
+with Command 'derive'
+	.args={
+		{'source', required: true}
+		{'name', required: true}
+	}
+	.desc="Creates a container deriving from another container"
+	.fn= (source, name) ->
+		-- load container config
+		ini=getini source, machine: true
+		
+		-- derive config file
+		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
+		ini\set 'layer', 'filename', 'layer.dir'
+		ini\set 'layer', 'type', 'directory'
+		ini\set 'layer', 'writable', true
+		ini\set 'machine', 'rootfs', 'layer'
+		ini\append 'machine', 'layers', name
+		
+		-- create new container
+		ensuredir "#{CONTAINER_DIR}/#{name}"
+		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
+		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
+
+with Command 'freeze'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Freezes a container to squashfs"
+	.fn= (name) ->
+		-- mount layer
+		ini=getini name, layer: true
+		State\lock 'container', name
+		layer=mountlayer name
+		State\use 'layer', layer.root
+		ok, err=pcall () ->
+			runorerror 'mksquashfs', layer.rootfs, "#{dir}/layer.squashfs", '-comp', 'xz', '-Xdict-size', '100%'
+		State\release 'layer', layer.root
+		oldroot="#{CONTAINER_DIR}/#{name}/#{ini\get 'layer', 'filename'}"
+		error err unless ok
+		ini\set 'layer', 'filename', 'layer.squashfs'
+		ini\set 'layer', 'type', 'squashfs'
+		ini\set 'layer', 'writable', false
+		if ini\hassection 'machine'
+			ini\set 'machine', 'rootfs', 'tmpfs'
+		ini\export "#{dir}/config.ini"
+		runorerror 'rm', '-rf', oldroot
+		State\unlock 'container', name
+
+with Command 'help'
+	.args={
+		{'command', required: false}
+	}
+	.desc="Displays help for a command"
+	.fn= (command) ->
+		unless command
+			io.write "Available commands: #{table.concat [name for name in pairs Command.commands], ", "}\n"
+			return
+		command=Command\get command
+		io.write "#{command.desc}\n"
+		io.write "#{command\usage!}\n"
+		if command.help
+			io.write "\n"
+			io.write "#{line}\n" for line in *command.help
+		else
+			io.write "[no help provided]\n"
+
+-- make sure we run in good conditions
+ensuredir CONTAINER_WORKDIR
+
+-- run the right command according to script args
+fn=() -> error!
+command=(table.remove arg, 1) or 'help'
+cmd=Command.commands[command]
+if cmd
+	err=false
+	for i, argtype in ipairs cmd.args
+		if argtype.required and not arg[i]
+			io.write "Missing required argument #{argtype[1]}\n"
+			err=true
+	unless err
+		fn=cmd.fn
+else
+	io.write "No such command #{command}\n"
+
+-- run the actual function and cleanup
 ok, err=pcall fn, (table.unpack or unpack) arg
 unless ok
-	io.stderr\write err
-	io.stderr\write '\n'
-	os.exit 1
+	if err
+		io.stderr\write err
+		io.stderr\write '\n'
+State\cleanup!
+os.exit ok and 0 or 1
