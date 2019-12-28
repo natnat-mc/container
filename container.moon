@@ -502,11 +502,11 @@ nspawnargs= (name, ini, machine, ...) ->
 				push "--network-macvlan=#{macvlan}"
 			for ipvlan in *ini\getlist 'networking', 'ipvlan' -- add ipvlan interfaces
 				push "--network-ipvlan=#{ipvlan}"
-			for veth in *ini\getlist 'network', 'veth' -- add veth interfaces
+			for veth in *ini\getlist 'networking', 'veth' -- add veth interfaces
 				push "--network-veth-extra=#{veth}"
-			if bridge=ini\get 'network', 'bridge' -- add bridge interface
+			if bridge=ini\get 'networking', 'bridge' -- add bridge interface
 				push "--network-bridge=#{bridge}"
-			if zone=ini\get 'network', 'zone' -- add zone interface
+			if zone=ini\get 'networking', 'zone' -- add zone interface
 				push "--network-zone=#{zone}"
 	switch ini\get 'machine', 'capabilities' -- set machine capabilites
 		when 'auto'
