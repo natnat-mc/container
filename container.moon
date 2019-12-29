@@ -82,6 +82,8 @@ class INI
 	set: (section, key, val) =>
 		@addsection section
 		@sections[section][key]=val
+	setlist: (section, key, list) =>
+		@set section, key, table.concat list, ' '
 	append: (section, key, ...) =>
 		list=@getlist section, key
 		table.insert list, select i, ... for i=1, select '#', ...
@@ -722,6 +724,34 @@ with Command 'derive'
 		ensuredir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
+
+with Command 'clone'
+	.args={
+		{'source', required: true}
+		{'name', required: true}
+	}
+	.desc="Clones a container non-recursively"
+	.fn= (source, name) ->
+		-- load container
+		ini=getini source
+		State\lock 'container', source
+		error "Container is in use" unless 0==State\uses 'container', source
+		
+		-- create destination directory
+		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
+		ensuredir "#{CONTAINER_DIR}/#{name}"
+		
+		-- clone source layer if present
+		if ini\hassection 'layer'
+			runorerror 'cp', '-a', "#{CONTAINER_DIR}/#{source}/#{ini\get 'layer', 'filename'}", "#{CONTAINER_DIR}/#{name}"
+			layers=ini\getlist 'machine', 'layers'
+			for i, layer in ipairs layers
+				layers[i]=name if layer==source
+			ini\setlist 'machine', 'layers', layers
+		
+		-- write config file
+		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
+		State\unlock 'container', source
 
 with Command 'freeze'
 	.args={
