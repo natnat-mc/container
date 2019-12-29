@@ -226,19 +226,24 @@ class State
 	@ownlocks: {}
 	
 	@lock: (category, name) =>
+		key="#{category}:#{name}"
+		if @ownlocks[key]
+			@ownlocks[key]+=1
+			return
 		@acquire!
 		@load!
-		key="#{category}:#{name}"
 		if @ini\get 'lock', key, false
 			@discard!
 			error "Failed to lock #{category} #{name}"
 		@ini\set 'lock', key, true
-		@ownlocks[key]=true
+		@ownlocks[key]=1
 		@save!
 		@discard!
 	
 	@unlock: (category, name) =>
 		key="#{category}:#{name}"
+		@ownlocks[key]-=1
+		return unless @ownlocks[key]==0
 		error "lock not owned #{category} #{name}" unless @ownlocks[key]
 		@acquire!
 		@load!
@@ -727,10 +732,11 @@ with Command 'freeze'
 		-- mount layer
 		ini=getini name, layer: true
 		State\lock 'container', name
+		error "Container is in use" unless 0==State\uses 'container', name
 		layer=mountlayer name
 		State\use 'layer', layer.root
 		ok, err=pcall () ->
-			runorerror 'mksquashfs', layer.rootfs, "#{dir}/layer.squashfs", '-comp', 'xz', '-Xdict-size', '100%'
+			runorerror 'mksquashfs', layer.rootfs, "#{CONTAINER_DIR}/#{name}/layer.squashfs", '-comp', 'xz', '-Xdict-size', '100%'
 		State\release 'layer', layer.root
 		oldroot="#{CONTAINER_DIR}/#{name}/#{ini\get 'layer', 'filename'}"
 		error err unless ok
@@ -739,7 +745,7 @@ with Command 'freeze'
 		ini\set 'layer', 'writable', false
 		if ini\hassection 'machine'
 			ini\set 'machine', 'rootfs', 'tmpfs'
-		ini\export "#{dir}/config.ini"
+		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		runorerror 'rm', '-rf', oldroot
 		State\unlock 'container', name
 
