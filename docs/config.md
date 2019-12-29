@@ -1,4 +1,5 @@
 # Config file format
+Note than most functionality is based on `systemd-nspawn`, and some options may not work on older versions
 
 ## `[layer]` section
 - `writable`: boolean  
@@ -14,8 +15,8 @@
 - `rootfs`: `layer|tmpfs` *defaults to `layer`*
 - `networking`: `host|private` *defaults to `host`*
 - `capabilities`: `auto|all|list` *defaults to `auto`*
-- `resolv-conf`: `host|container|copy` *defaults to `container`*
-- `timezone`: `host|container|copy` *defaults to `container`*
+- `resolv-conf`: `host|container|copy` *defaults to `host`*
+- `timezone`: `host|container|copy` *defaults to `host`*
 - `interactive`: boolean *defaults to true*  
 	if set to `true`, the container will have a `/dev/console` linked to the terminal, otherwise it will be created but linked nowhere
 

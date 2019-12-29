@@ -48,6 +48,12 @@ umount= (dir) ->
 	run 'umount', dir
 	run 'rmdir', '--ignore-fail-on-non-empty', dir
 
+getsystemdversion= () ->
+	fd=popen 'systemd-nspawn', '--version'
+	version=tonumber (fd\read '*l')\match 'systemd%s([0-9]+)'
+	fd\close!
+	return version or error "Unable to determine systemd version"
+
 class INI
 	new: () =>
 		@sections={}
@@ -117,6 +123,44 @@ class INI
 			else
 				error "line #{lineno}: '#{line}' not understood"
 		return ini
+
+class GlobalConfig
+	local ini
+	ok, err=pcall () ->
+		ini=INI\parse "#{CONTAINER_DIR}/globalconfig.ini"
+	unless ok
+		io.stderr\write "Can't load gobal config: #{err}\n"
+		io.stderr\write "Creating default global config\n"
+		ini=INI!
+		
+		io.stderr\write "Attempting to detect unusable functionality\n"
+		ini\addsection 'blacklist'
+		systemdversion=getsystemdversion!
+		blacklist= (name, ver) ->
+			ini\set 'blacklist', name, true if systemdversion<ver
+		blacklist '--console', 242
+		blacklist '--hostname', 239
+		blacklist '--timezone', 239
+		blacklist '--resolv-conf', 239
+		blacklist 'internalbind', 233
+		blacklist '--network-zone', 230
+		blacklist 'runcommand', 229
+		blacklist '--network-veth-extra', 228
+		blacklist '--network-macvlan', 211
+		
+		ok, err=pcall () ->
+			ini\export "#{CONTAINER_DIR}/globalconfig.ini"
+		unless ok
+			io.stderr\write "Unable to save global config: #{err}\n"
+	
+	@ifallow: (condition, fn) =>
+		fn! unless ini\get 'blacklist', condition
+	@allowed: (condition) =>
+		not ini\get 'blacklist', condition
+	
+	@get: (k, v, def) => ini\get k, v, def
+	@getlist: (k, v) => ini\getlist k, v
+	@getorerror: (k, v) => ini\getorerror k, v
 
 class State
 	@load: () =>
@@ -404,8 +448,8 @@ loaddefaults= (name, ini) ->
 	def 'machine', 'rootfs', 'layer'
 	def 'machine', 'networking', 'host'
 	def 'machine', 'capabilities', 'auto'
-	def 'machine', 'resolv-conf', 'container'
-	def 'machine', 'timezone', 'container'
+	def 'machine', 'resolv-conf', 'host'
+	def 'machine', 'timezone', 'host'
 	def 'machine', 'interactive', true
 
 -- checks config file
@@ -479,17 +523,19 @@ nspawnargs= (name, ini, machine, ...) ->
 	do -- use the machine rootfs
 		push '-D'
 		push machine
-	do -- set machine interactivity
+	GlobalConfig\ifallow '--console', () -> -- set machine interactivity
 		push "--console=#{if ini\get 'machine', 'interactive' then 'interactive' else 'passive'}"
-	switch ini\get 'machine', 'resolv-conf' -- set resolv-conf
-		when 'host' then push '--resolv-conf=bind-host'
-		when 'container' then push '--resolv-conf=off'
-		when 'copy' then push '--resolv-conf=copy-host'
-	switch ini\get 'machine', 'timezone' -- set timezone
-		when 'host' then push '--timezone=bind'
-		when 'container' then push '--timezone=off'
-		when 'copy' then push '--timezone=copy'
-	do -- set machine hostname
+	GlobalConfig\ifallow '--resolv-conf', () -> -- set resolv.conf
+		switch ini\get 'machine', 'resolv-conf'
+			when 'host' then push '--resolv-conf=bind-host'
+			when 'container' then push '--resolv-conf=off'
+			when 'copy' then push '--resolv-conf=copy-host'
+	GlobalConfig\ifallow '--timezone', () -> -- set timezone
+		switch ini\get 'machine', 'timezone'
+			when 'host' then push '--timezone=bind'
+			when 'container' then push '--timezone=off'
+			when 'copy' then push '--timezone=copy'
+	GlobalConfig\ifallow '--hostname', () -> -- set machine hostname
 		push "--hostname=#{ini\get 'machine', 'hostname'}"
 	switch ini\get 'machine', 'networking' -- set machine networking
 		when 'host'
@@ -498,16 +544,19 @@ nspawnargs= (name, ini, machine, ...) ->
 			push '--private-network'
 			for interface in *ini\getlist 'networking', 'interfaces' -- assign interfaces
 				push "--network-interface=#{interface}"
-			for macvlan in *ini\getlist 'networking', 'macvlan' -- add macvlan interfaces
-				push "--network-macvlan=#{macvlan}"
+			GlobalConfig\ifallow '--network-macvlan', () ->
+				for macvlan in *ini\getlist 'networking', 'macvlan' -- add macvlan interfaces
+					push "--network-macvlan=#{macvlan}"
 			for ipvlan in *ini\getlist 'networking', 'ipvlan' -- add ipvlan interfaces
 				push "--network-ipvlan=#{ipvlan}"
-			for veth in *ini\getlist 'networking', 'veth' -- add veth interfaces
-				push "--network-veth-extra=#{veth}"
+			GlobalConfig\ifallow '--network-veth-extra', () ->
+				for veth in *ini\getlist 'networking', 'veth' -- add veth interfaces
+					push "--network-veth-extra=#{veth}"
 			if bridge=ini\get 'networking', 'bridge' -- add bridge interface
 				push "--network-bridge=#{bridge}"
-			if zone=ini\get 'networking', 'zone' -- add zone interface
-				push "--network-zone=#{zone}"
+			GlobalConfig\ifallow '--network-zone', () ->
+				if zone=ini\get 'networking', 'zone' -- add zone interface
+					push "--network-zone=#{zone}"
 	switch ini\get 'machine', 'capabilities' -- set machine capabilites
 		when 'auto'
 			nil -- nothing to do
@@ -526,6 +575,7 @@ nspawnargs= (name, ini, machine, ...) ->
 		for mountpoint in *mountpoints
 			rel, ro, path=(ini\get 'binds', mountpoint)\match '^(%+?)(%-?)(.+)$'
 			cmd=if ro=='-' then 'bind-ro' else 'bind'
+			rel='' unless GlobalConfig\allowed 'internalbind'
 			push "--#{cmd}=#{path}:#{rel}#{mountpoint}"
 	for i=1, select '#', ... -- extra arguments
 		push select i, ...
@@ -613,36 +663,37 @@ with Command 'boot'
 		-- exit
 		error err unless ok
 
-with Command 'run'
-	.args={
-		{'name', required: true}
-		{'cmd', required: true}
-		{'args', required: false, multiple: true}
-	}
-	.desc="Runs a command in a container"
-	.fn=(name, cmd, ...) ->
-		ini=getini name, {machine: true}
-		
-		-- populate default values
-		loaddefaults name, ini
-		checkconfig name, ini
-		
-		-- mount the machine
-		machine=mountmachine name
-		State\use 'machine', machine
-		
-		-- get our nspawn arguments
-		args=nspawnargs name, ini, machine, '-a', cmd, ...
-		
-		-- run our command in our container
-		ok, err=pcall () ->
-			runorerror 'systemd-nspawn', args
-		
-		-- release our machine
-		State\release 'machine', machine
-		
-		-- exit
-		error err unless ok
+GlobalConfig\ifallow 'runcommand', () ->
+	with Command 'run'
+		.args={
+			{'name', required: true}
+			{'cmd', required: true}
+			{'args', required: false, multiple: true}
+		}
+		.desc="Runs a command in a container"
+		.fn=(name, cmd, ...) ->
+			ini=getini name, {machine: true}
+			
+			-- populate default values
+			loaddefaults name, ini
+			checkconfig name, ini
+			
+			-- mount the machine
+			machine=mountmachine name
+			State\use 'machine', machine
+			
+			-- get our nspawn arguments
+			args=nspawnargs name, ini, machine, '-a', cmd, ...
+			
+			-- run our command in our container
+			ok, err=pcall () ->
+				runorerror 'systemd-nspawn', args
+			
+			-- release our machine
+			State\release 'machine', machine
+			
+			-- exit
+			error err unless ok
 
 with Command 'derive'
 	.args={
