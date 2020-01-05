@@ -461,9 +461,15 @@ loaddefaults= (name, ini) ->
 
 -- checks config file
 knownvalid={}
-checkconfig= (name, ini) ->
+checkconfig= (name, ini, strict=false) ->
 	return if knownvalid[name]
 	
+	warn= (m) ->
+		msg="in config for #{name}: #{m}"
+		if strict=='error'
+			error msg
+		elseif strict=='warning'
+			io.stderr\write "WARNING: #{m}\n"
 	cerr= (s, k, e) ->
 		error "in config for #{name}: section #{s}, key #{k}: #{e}"
 	ctype= (s, k, t) ->
@@ -484,13 +490,26 @@ checkconfig= (name, ini) ->
 	ctest= (fn) ->
 		ok, err=pcall fn
 		error "in config for #{name}: #{err}" unless ok
+	clist= (s, l) ->
+		m={e, true for e in *l}
+		for k in pairs ini.sections[s]
+			unless m[k]
+				warn "invalid key #{k} in section #{s}"
 	
 	if ini\hassection 'layer'
+		clist 'layer', {'filename', 'type', 'writable'}
 		ctype 'layer', 'writable', 'boolean'
 		ctype 'layer', 'filename', 'string'
-		cvals 'layer', 'type', {'ext', 'squashfs', 'directory'}
+		cvals 'layer', 'type', {'ext4', 'squashfs', 'directory'}
+		ctest () ->
+			fs="#{CONTAINER_DIR}/#{name}/#{ini\get 'layer', 'filename'}"
+			if 'directory'==ini\get 'layer', 'type'
+				error "directory #{fs} doesn't exist" unless isdir fs
+			else
+				error "file #{fs} doesn't exist" unless isfile fs
 	
 	if ini\hassection 'machine'
+		clist 'machine', {'hostname', 'arch', 'layers', 'rootfs', 'networking', 'capabilities', 'resolv-conf', 'timezone', 'interactive'}
 		ctype 'machine', 'hostname', 'string'
 		ctype 'machine', 'arch', 'string'
 		ctest () ->
@@ -515,8 +534,13 @@ checkconfig= (name, ini) ->
 			cregm 'binds', bind, '^%+?%-?/.*'
 	
 	if ini\hassection 'capabilities'
+		warn "unused section capabilities" unless 'list'==ini\get 'machine', 'capabilities'
 		for capability in pairs ini.sections.capabilities
 			cvals 'capabilities', capability, {'grant', 'drop'}
+	
+	if ini\hassection 'networking'
+		warn "unused section networking" unless 'private'==ini\get 'machine', 'networking'
+		clist 'networking', {'interfaces', 'macvlan', 'ipvlan', 'veth', 'bridge', 'zone'}
 	
 	knownvalid[name]=true
 
@@ -622,6 +646,22 @@ with Command 'info'
 		-- dump container INI to stdout
 		-- I could pretty-print this, but ¯\_(ツ)_/¯
 		(getini name)\export!
+
+with Command 'checkcfg'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Checks configuration of a container"
+	.fn=(name) ->
+		-- get container ini file
+		ini=getini name
+		
+		-- populate default values
+		loaddefaults name, ini
+		checkconfig name, ini, 'warning'
+		
+		-- if we made it this far, the config is valid
+		ini\export!
 
 with Command 'edit'
 	.args={
