@@ -392,7 +392,7 @@ mergelayers= (list, name) ->
 	ensuredir root
 	if #list==1
 		-- a merge with a single layer can be done with a bind
-		runorerror 'mount', '-o', 'bind', list[1].workdir, root
+		runorerror 'mount', '-o', 'bind', list[1].rootfs, root
 		State\use 'layer', list[1].root
 	else
 		local options
