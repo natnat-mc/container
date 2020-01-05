@@ -838,6 +838,12 @@ with Command 'help'
 			io.write "[no help provided]\n"
 
 -- make sure we run in good conditions
+do
+	fd=popen 'id', '-u'
+	unless '0'==fd\read '*l'
+		io.stderr\write "Need to run as root\n"
+		os.exit 1
+	fd\close!
 ensuredir CONTAINER_WORKDIR
 
 -- run the right command according to script args
