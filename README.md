@@ -23,3 +23,18 @@ This command creates a container using the source as base, with a directory laye
 ### `container freeze <layer>`
 This command freezes a layer (compresses its layer to `squashfs`) and, if there is also a machine in the container, updates it to use a `tmpfs` upper layer.
 
+## Installing
+This script is written in [MoonScript](http://moonscript.org) and as such requires lua and moon to be installed. It uses `systemd-nspawn` which is usually in the `systemd-container` package.
+
+### Installing on Debian and derivatives (Raspbian, Ubuntu)
+```bash
+sudo apt install systemd-container lua5.1 liblua5.1-dev luarocks git`
+sudo luarocks install moonscript
+cd /tmp
+git clone https://github.com/natnat-mc/container.git
+cd container
+./install.sh
+```
+
+The use of `screen` and `screenie` or `tmux` is also greatly encouraged. They can be installed with the following command: `sudo apt install screen sceenie tmux`.
+
