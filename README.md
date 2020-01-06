@@ -28,7 +28,7 @@ This script is written in [MoonScript](http://moonscript.org) and as such requir
 
 ### Installing on Debian and derivatives (Raspbian, Ubuntu)
 ```bash
-sudo apt install systemd-container lua5.1 liblua5.1-dev luarocks git`
+sudo apt install systemd-container lua5.1 liblua5.1-dev luarocks git
 sudo luarocks install moonscript
 cd /tmp
 git clone https://github.com/natnat-mc/container.git
