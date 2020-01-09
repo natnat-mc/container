@@ -8,7 +8,7 @@ escape= (str) ->
 	'\"'..str\gsub('\\', '\\\\')\gsub('\'', '\\\'')\gsub('\"', '\\\"')..'\"'
 
 run= (prog, ...) ->
-	return run prog, (table.unpack or unpack) ... if 'table'==type select 1, ...
+	return run prog, (table.unpack or unpack) ... if 'table'==type ((select 1, ...) or nil)
 	cmd="#{prog} #{table.concat [escape select i, ... for i=1, select '#', ...], ' '}"
 	print cmd if VERBOSE
 	a, b, c=os.execute cmd
@@ -18,10 +18,16 @@ runorerror= (prog, ...) ->
 	error "failed to run #{prog}" unless run prog, ...
 
 popen= (prog, ...) ->
-	return popen prog, (table.unpack or unpack) ... if 'table'==type select 1, ...
+	return popen prog, (table.unpack or unpack) ... if 'table'==type ((select 1, ...) or nil)
 	cmd="#{prog} #{table.concat [escape select i, ... for i=1, select '#', ...], ' '}"
 	print cmd if VERBOSE
 	io.popen cmd
+
+pread= (prog, ...) ->
+	fd=popen prog, ...
+	tab=[line for line in fd\lines!]
+	fd\close!
+	return tab
 
 exists= (file) -> run '[', '-e', file, ']'
 isfile= (file) -> run '[', '-f', file, ']'
@@ -792,6 +798,30 @@ with Command 'clone'
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		State\unlock 'container', source
+
+with Command 'create'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Creates a container with minimal config and directory layer"
+	.fn= (name) ->
+		-- create INI
+		ini=INI!
+		ini\set 'layer', 'filename', 'layer.dir'
+		ini\set 'layer', 'type', 'directory'
+		ini\set 'layer', 'writable', true
+		ini\set 'machine', 'arch', (pread 'arch')[1]
+		ini\set 'machine', 'layers', name
+		
+		-- create destination directories
+		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
+		ensuredir "#{CONTAINER_DIR}/#{name}"
+		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
+		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir/rootfs"
+		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir/workdir"
+		
+		-- write config file
+		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 
 with Command 'freeze'
 	.args={
