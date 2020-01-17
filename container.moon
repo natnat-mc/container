@@ -5,7 +5,7 @@ CONTAINER_DIR=(os.getenv 'CONTAINER_DIR') or '/srv/containers'
 CONTAINER_WORKDIR=(os.getenv 'CONTAINER_WORKDIR') or '/tmp/containerwork'
 
 escape= (str) ->
-	'\"'..str\gsub('\\', '\\\\')\gsub('\'', '\\\'')\gsub('\"', '\\\"')..'\"'
+	'\"'..(tostring str)\gsub('\\', '\\\\')\gsub('\'', '\\\'')\gsub('\"', '\\\"')..'\"'
 
 run= (prog, ...) ->
 	return run prog, (table.unpack or unpack) ... if 'table'==type ((select 1, ...) or nil)
@@ -16,6 +16,13 @@ run= (prog, ...) ->
 	return a==0, a
 runorerror= (prog, ...) ->
 	error "failed to run #{prog}" unless run prog, ...
+
+try= (options) ->
+	import times, delay, fn from options
+	for i=1, times
+		ok, val=pcall fn
+		return val if ok
+		run 'sleep', delay if i!=tries
 
 popen= (prog, ...) ->
 	return popen prog, (table.unpack or unpack) ... if 'table'==type ((select 1, ...) or nil)
@@ -28,6 +35,12 @@ pread= (prog, ...) ->
 	tab=[line for line in fd\lines!]
 	fd\close!
 	return tab
+
+preadl= (prog, ...) ->
+	fd=popen prog, ...
+	line=fd\read '*l'
+	fd\close!
+	return line
 
 exists= (file) -> run '[', '-e', file, ']'
 isfile= (file) -> run '[', '-f', file, ']'
@@ -59,6 +72,11 @@ getsystemdversion= () ->
 	version=tonumber (fd\read '*l')\match 'systemd%s([0-9]+)'
 	fd\close!
 	return version or error "Unable to determine systemd version"
+
+isin= (arr, e) ->
+	for v in *arr
+		return true if e==v
+	return false
 
 class INI
 	new: () =>
@@ -170,6 +188,24 @@ class GlobalConfig
 	@getlist: (k, v) => ini\getlist k, v
 	@getorerror: (k, v) => ini\getorerror k, v
 
+class Logger
+	@use: (service) =>
+		logdir=GlobalConfig\get 'general', 'logdir', '/var/log/container'
+		ensuredir logdir
+		@file=io.open "#{logdir}/#{service}.log", "a"
+	@close: () =>
+		@file\close!
+		@file=nil
+	
+	@_log: (level, msg) =>
+		@file\write "[", os.date("%Y-%m-%d %H:%M:%S"), "][", level\upper!, "] ", msg, "\n"
+		@file\flush!
+	
+	@log: (msg) => @_log 'log', msg
+	@info: (msg) => @_log 'info', msg
+	@err: (msg) => @_log 'err', msg
+	@warn: (msg) => @_log 'warn', msg
+
 class State
 	@load: () =>
 		ok=pcall () -> @ini=INI\parse "#{CONTAINER_WORKDIR}/state.ini"
@@ -259,6 +295,45 @@ class State
 		@ownlocks[key]=nil
 		@save!
 		@discard!
+	
+	@addrunningmachine: (name, pid) =>
+		@acquire!
+		@load!
+		@ini\set 'runningmachines', name, pid
+		@save!
+		@discard!
+	
+	@runningmachines: () =>
+		@acquire!
+		@load!
+		running={}
+		edited=false
+		for name, pid in pairs (@ini.sections.runningmachines or {})
+			if isdir "/proc/#{pid}"
+				running[name]=pid
+			else
+				@ini\set 'runningmachines', name, nil
+				edited=true
+		if edited
+			@save!
+		@discard!
+		return running
+	
+	@machinerunning: (name) =>
+		@acquire!
+		@load!
+		pid=@ini\get 'runningmachines', name
+		unless pid
+			@discard!
+			return false
+		if isdir "/proc/#{pid}"
+			@discard!
+			return pid
+		else
+			@ini\set 'runningmachines', name, nil
+			@save!
+			@discard!
+			return false
 	
 	@cleanup: () =>
 		needscleanup=next @ownlocks
@@ -618,6 +693,77 @@ nspawnargs= (name, ini, machine, ...) ->
 		push select i, ...
 	return args
 
+startmachine= (name) ->
+	error "Already running" if State\machinerunning name
+	
+	screendir="/run/screen/S-#{preadl 'whoami'}"
+	screenname="container-#{name}"
+	runorerror 'screen', '-dmS', screenname, 'container', 'boot', name
+	local screenpid
+	for screen in *ls screendir
+		local name
+		pid, name=screen\match "(%d+)%.(%S+)"
+		if screenname==name
+			screenpid=pid
+			break
+	unless screenpid
+		error "Screen didn't start"
+	
+	scriptpid=tonumber preadl 'pgrep', '-P', screenpid
+	unless scriptpid
+		error "Script didn't start"
+	
+	nspawnpid=try delay: 1, times: 5, fn: () ->
+		shpid=tonumber preadl 'pgrep', '-P', scriptpid
+		error! unless shpid
+		pid=tonumber preadl 'pgrep', '-P', shpid
+		error! unless pid
+		return pid
+	unless nspawnpid
+		error "systemd-nspawn didn't start"
+	
+	initpid=try delay: 1, times: 5, fn: () ->
+		pid=tonumber preadl 'pgrep', '-P', nspawnpid
+		error! unless pid
+		return pid
+	unless initpid
+		error "Init didn't start"
+	
+	State\addrunningmachine name, initpid
+	return initpid
+
+hasnetwork= (iface) ->
+	isdir "/sys/class/net/#{iface}"
+
+networkstate= (iface) ->
+	fd=io.open "/sys/class/net/#{iface}/operstate", 'r'
+	return 'unavaliable' unless fd
+	state=fd\read '*l'
+	fd\close!
+	return state
+
+networkaddress= (iface) ->
+	lines=pread 'ip', 'addr', 'show', 'dev', iface
+	v4=[addr\match "inet%s+(%d+%.%d+%.%d+%.%d+%/%d+)" for addr in *lines when addr\match "inet"]
+	v6=[addr\match "inet6%s+([%da-f:]+%/%d+)" for addr in *lines when addr\match "inet6"]
+	all=[a for a in *v4]
+	table.insert all, a for a in *v6
+	return {:v4, :v6, :all}
+
+confignetwork= (network) ->
+	section="network \"#{network}\""
+	iface=GlobalConfig\get section, 'interface'
+	address=GlobalConfig\get section, 'address'
+	script=GlobalConfig\get section, 'script'
+	error "No interface for network #{network}" unless iface
+	error "No address for network #{network}" unless address
+	error "Interface #{iface} not present" unless hasnetwork iface
+	unless isin (networkaddress iface).all, address
+		runorerror 'ip', 'addr', 'add', address, 'dev', iface
+	if 'down'==networkstate iface
+		runorerror 'ip', 'link', 'set', iface, 'up'
+	runorerror script if script
+
 with Command 'list'
 	.args={}
 	.desc="Lists all containers"
@@ -642,6 +788,7 @@ with Command 'list'
 			if ini\hassection 'machine'
 				io.write "[machine]"
 			io.write "\n"
+		return 0
 
 with Command 'info'
 	.args={
@@ -652,6 +799,7 @@ with Command 'info'
 		-- dump container INI to stdout
 		-- I could pretty-print this, but ¯\_(ツ)_/¯
 		(getini name)\export!
+		return 0
 
 with Command 'checkcfg'
 	.args={
@@ -668,6 +816,7 @@ with Command 'checkcfg'
 		
 		-- if we made it this far, the config is valid
 		ini\export!
+		return 0
 
 with Command 'edit'
 	.args={
@@ -686,6 +835,7 @@ with Command 'edit'
 		
 		-- edit the file
 		run editor, "#{CONTAINER_DIR}/#{name}/config.ini"
+		return 0
 
 with Command 'boot'
 	.args={
@@ -715,6 +865,16 @@ with Command 'boot'
 		
 		-- exit
 		error err unless ok
+		return 0
+
+with Command 'network-start'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Sets up a network"
+	.fn=(name) ->
+		confignetwork name
+		return 0
 
 GlobalConfig\ifallow 'runcommand', () ->
 	with Command 'run'
@@ -747,6 +907,7 @@ GlobalConfig\ifallow 'runcommand', () ->
 			
 			-- exit
 			error err unless ok
+			return 0
 
 with Command 'derive'
 	.args={
@@ -770,6 +931,7 @@ with Command 'derive'
 		ensuredir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
+		return 0
 
 with Command 'clone'
 	.args={
@@ -798,6 +960,7 @@ with Command 'clone'
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		State\unlock 'container', source
+		return 0
 
 with Command 'create'
 	.args={
@@ -822,6 +985,7 @@ with Command 'create'
 		
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
+		return 0
 
 with Command 'freeze'
 	.args={
@@ -848,6 +1012,127 @@ with Command 'freeze'
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		runorerror 'rm', '-rf', oldroot
 		State\unlock 'container', name
+		return 0
+
+with Command 'start'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Starts a machine in dettached mode"
+	.fn= (name) ->
+		pid=startmachine name
+		io.write "Machine started, init PID is #{pid}\n"
+		return 0
+
+with Command 'attach'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Attaches a machine which was started in dettached mode"
+	.fn= (name) ->
+		error "Machine #{name} is not running" unless State\machinerunning name
+		runorerror 'screen', '-r', "container-#{name}"
+		return 0
+
+with Command 'status'
+	.args={
+		{'name', required: false}
+	}
+	.desc="Shows the status of a machine, or lists all the running machines"
+	.fn= (name) ->
+		if name
+			if State\machinerunning name
+				io.write "Machine #{name} is running\n"
+				return 0
+			else
+				io.write "Machine #{name} is not running\n"
+				return 1
+		else
+			machines=State\runningmachines!
+			unless next machines
+				io.write "No machine running\n"
+				return 1
+			longestname=0
+			for name in pairs machines
+				longestname=#name if #name>longestname
+			for name, pid in pairs machines
+				io.write name
+				io.write string.rep ' ', longestname-#name+1
+				io.write pid
+				io.write '\n'
+			return 0
+
+with Command 'stop'
+	.args={
+		{'name', required: true}
+	}
+	.desc="Stops a running machine"
+	.fn= (name) ->
+		pid=State\machinerunning name
+		error "Machine #{name} is not running" unless pid
+		runorerror 'kill', '-9', pid
+		return 0
+
+with Command '-internal-atboot'
+	.args={}
+	.desc="Internal command meant to be run at boot"
+	.fn= () ->
+		Logger\use 'service'
+		errcount=0
+		Logger\info "Running one-shot container service"
+		for machine in *GlobalConfig\getlist 'general', 'autostart'
+			Logger\log "Autostarting container #{machine}"
+			ok, err=pcall () ->
+				startmachine machine
+			unless ok
+				Logger\err err
+				errcount+=1
+		for network in *GlobalConfig\getlist 'general', 'networks'
+			Logger\log "Running initial config of network #{network}"
+			ok, err=pcall () ->
+				confignetwork network
+			unless ok
+				Logger\err err
+				errcount+=1
+		if errcount==0
+			Logger\info "Finished one-shot container service without error"
+		else
+			Logger\warn "Finished one-shot container service with #{errcount} error(s)"
+		Logger\close!
+		return 0
+
+with Command '-internal-cronjob'
+	.args={}
+	.desc="Internal command meant to be run in a cron job"
+	.fn= () ->
+		Logger\use 'cronjob'
+		errcount=0
+		actioncount=0
+		for machine in *GlobalConfig\getlist 'general', 'autorestart'
+			ok, err=pcall () ->
+				unless State\machinerunning machine
+					actioncount+=1
+					Logger\log "Restarting machine #{machine}"
+					startmachine machine
+			unless ok
+				Logerr\err err
+				errcount+=1
+		for network in *GlobalConfig\getlist 'general', 'networks'
+			ok, err=pcall () ->
+				iface=GlobalConfig\get "network \"#{network}\"", 'interface'
+				if (hasnetwork iface) and 'down'==networkstate iface
+					actioncount+=1
+					Logger\log "Running config of network #{network}"
+					confignetwork network
+			unless ok
+				Logger\err err
+				errcount+=1
+		if actioncount!=0
+			Logger\info "Finished container cron job: done #{actioncount} actions"
+		if errcount!=0
+			Logger\warn "Encountered #{errcount} errors"
+		Logger\close!
+		return 0
 
 with Command 'help'
 	.args={
@@ -866,6 +1151,7 @@ with Command 'help'
 			io.write "#{line}\n" for line in *command.help
 		else
 			io.write "[no help provided]\n"
+		return 0
 
 -- make sure we run in good conditions
 do
@@ -898,4 +1184,10 @@ unless ok
 		io.stderr\write err
 		io.stderr\write '\n'
 State\cleanup!
-os.exit ok and 0 or 1
+if ok
+	if 'number'==type err
+		os.exit err
+	else
+		os.exit 0
+else
+	os.exit 1
