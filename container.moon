@@ -1042,7 +1042,7 @@ with Command 'status'
 	.fn= (name) ->
 		if name
 			if State\machinerunning name
-				io.write "Machine #{name} is running\n"
+				io.write "Machine #{name} is running with pid #{State\machinerunning name}\n"
 				return 0
 			else
 				io.write "Machine #{name} is not running\n"
