@@ -1056,9 +1056,12 @@ with Command 'status'
 				io.write "No machine running\n"
 				return 1
 			longestname=0
-			for name in pairs machines
+			names=[name for name in pairs machines]
+			table.sort names
+			for name in *names
 				longestname=#name if #name>longestname
-			for name, pid in pairs machines
+			for name in *names
+				pid=machines[name]
 				io.write name
 				io.write string.rep ' ', longestname-#name+1
 				io.write pid
