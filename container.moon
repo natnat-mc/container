@@ -776,9 +776,12 @@ with Command 'list'
 		
 		-- pretty-print result
 		longestname=0
-		for name in pairs containers
+		names=[name for name in pairs containers]
+		table.sort names
+		for name in *names
 			longestname=#name if #name>longestname
-		for name, ini in pairs containers
+		for name in *names
+			ini=containers[name]
 			io.write name
 			io.write string.rep ' ', (longestname-#name+1)
 			if ini\hassection 'layer'
