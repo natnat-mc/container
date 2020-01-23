@@ -531,14 +531,15 @@ loaddefaults= (name, ini) ->
 	def= (k, v, def) ->
 		if nil==ini\get k, v
 			ini\set k, v, def
-	def 'machine', 'hostname', name
-	def 'machine', 'layers', name
-	def 'machine', 'rootfs', 'layer'
-	def 'machine', 'networking', 'host'
-	def 'machine', 'capabilities', 'auto'
-	def 'machine', 'resolv-conf', 'host'
-	def 'machine', 'timezone', 'host'
-	def 'machine', 'interactive', true
+	if ini\hassection 'machine'
+		def 'machine', 'hostname', name
+		def 'machine', 'layers', name
+		def 'machine', 'rootfs', 'layer'
+		def 'machine', 'networking', 'host'
+		def 'machine', 'capabilities', 'auto'
+		def 'machine', 'resolv-conf', 'host'
+		def 'machine', 'timezone', 'host'
+		def 'machine', 'interactive', true
 
 -- checks config file
 knownvalid={}
