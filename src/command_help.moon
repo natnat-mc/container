@@ -8,7 +8,9 @@ with Command 'help'
 	.fn= (command) ->
 		unless command
 			Command\loadcommands!
-			io.write "Available commands: #{table.concat [name for name in pairs Command.commands], ", "}\n"
+			commands=[name for name in pairs Command.commands when not name\match '^%-internal%-']
+			table.sort commands
+			io.write "Available commands: #{table.concat commands, ", "}\n"
 			return
 		command=Command\get command
 		io.write "#{command.desc}\n"
