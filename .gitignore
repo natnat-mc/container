@@ -1,3 +1,6 @@
-shebang.txt
-container.lua
-container
+.vscode
+Makefile.deps
+build/*.lua
+build/*.c
+build/*.o
+out/container
