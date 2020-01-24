@@ -8,6 +8,10 @@ with Command 'create'
 		{'name', required: true}
 	}
 	.desc="Creates a container with minimal config and directory layer"
+	.help={
+		"The created container uses a directory layer called `layer.dir`, which is created empty"
+		"If you want to create a container with an os already in it, you may want to use `container create-debian` or `container create-alpine` instead"
+	}
 	.fn= (name) ->
 		-- create INI
 		ini=INI!

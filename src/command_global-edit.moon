@@ -7,6 +7,10 @@ with Command 'global-edit'
 		{'editor', required: false}
 	}
 	.desc="Edits the global config file"
+	.help={
+		"Edits the global `globalconfig.ini` in the given editor"
+		"If no editor is given, it will try `$EDITOR`, `$VISUAL` and `vi` in that order"
+	}
 	.fn=(name, editor) ->
 		-- find an editor
 		editor=os.getenv 'EDITOR' unless editor

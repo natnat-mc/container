@@ -8,6 +8,11 @@ with Command 'boot'
 		{'name', required: true}
 	}
 	.desc="Boots a container"
+	.help={
+		"Starts a container in foreground, without any form of control"
+		"The container is started with systemd-nspawn, according to the rules in its config.ini"
+		"If you want to be able to detach the container, you probably want `container start` or `container here` instead"
+	}
 	.fn=(name) ->
 		ini=getini name, {machine: true}
 		

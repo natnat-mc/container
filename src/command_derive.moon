@@ -9,6 +9,10 @@ with Command 'derive'
 		{'name', required: true}
 	}
 	.desc="Creates a container deriving from another container"
+	.help={
+		"The new container will use the same machine information, but will have an extra directory layer on top"
+		"This is similar to the `FROM` instruction of a dockerfile"
+	}
 	.fn= (source, name) ->
 		-- load container config
 		ini=getini source, machine: true

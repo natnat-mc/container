@@ -5,6 +5,10 @@ with Command 'help'
 		{'command', required: false}
 	}
 	.desc="Displays help for a command"
+	.help={
+		"Displays help for a command"
+		"If invoked without a command, lists all available commands"
+	}
 	.fn= (command) ->
 		unless command
 			Command\loadcommands!

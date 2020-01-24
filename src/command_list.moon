@@ -4,6 +4,10 @@ Command=require 'Command'
 with Command 'list'
 	.args={}
 	.desc="Lists all containers"
+	.help={
+		"Lists all containers, and displays whether or not they have a layer and a machine"
+		"If you want to show the running containers, you might want to use `container status` instead"
+	}
 	.fn=() ->
 		-- list containers
 		containers=getallini!

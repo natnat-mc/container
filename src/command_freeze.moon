@@ -9,6 +9,10 @@ with Command 'freeze'
 		{'name', required: true}
 	}
 	.desc="Freezes a container to squashfs"
+	.help={
+		"Converts the layer of the container to a read-only squashfs image"
+		"To revert this operation, use `container unfreeze`"
+	}
 	.fn= (name) ->
 		-- mount layer
 		ini=getini name, layer: true

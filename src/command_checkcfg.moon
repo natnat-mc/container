@@ -6,6 +6,10 @@ with Command 'checkcfg'
 		{'name', required: true}
 	}
 	.desc="Checks configuration of a container"
+	.help={
+		"Checks the configuration of a container"
+		"If the configuration is valid, dumps the expanded config to stdout"
+	}
 	.fn=(name) ->
 		-- get container ini file
 		ini=getini name

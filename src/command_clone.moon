@@ -10,6 +10,11 @@ with Command 'clone'
 		{'name', required: true}
 	}
 	.desc="Clones a container non-recursively"
+	.help={
+		"If the container has a layer, this layer is cloned"
+		"If the container has a machine, this machine is cloned"
+		"If the container uses the cloned layer in its machine, it is replaced by the clone"
+	}
 	.fn= (source, name) ->
 		-- load container
 		ini=getini source

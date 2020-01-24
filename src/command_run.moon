@@ -11,6 +11,11 @@ with Command 'run'
 		{'args', required: false, multiple: true}
 	}
 	.desc="Runs a command in a container"
+	.help={
+		"Runs a command inside a container, without booting it"
+		"This command isn't suited to be used in a pipe, and cannot be detached"
+		"If you want to boot the container, you might want to use `container boot`, `container start` or `container here` instead"
+	}
 	.fn=(name, cmd, ...) ->
 		if GlobalConfig\allowed 'runcommand'
 			ini=getini name, {machine: true}

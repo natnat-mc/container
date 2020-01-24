@@ -6,6 +6,10 @@ with Command 'status'
 		{'name', required: false}
 	}
 	.desc="Shows the status of a machine, or lists all the running machines"
+	.help={
+		"Displays the status and PID of a container"
+		"If no argument is given, displays the PID of all running containers instead"
+	}
 	.fn= (name) ->
 		if name
 			if State\machinerunning name

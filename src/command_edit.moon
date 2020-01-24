@@ -9,6 +9,10 @@ with Command 'edit'
 		{'editor', required: false}
 	}
 	.desc="Edits a container config file"
+	.help={
+		"Edits the container `config.ini` in the given editor"
+		"If no editor is given, it will try `$EDITOR`, `$VISUAL` and `vi` in that order"
+	}
 	.fn=(name, editor) ->
 		-- make sure the container exists
 		getini name
