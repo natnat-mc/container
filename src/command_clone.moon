@@ -23,10 +23,11 @@ with Command 'clone'
 		-- clone source layer if present
 		if ini\hassection 'layer'
 			runorerror 'cp', '-a', "#{CONTAINER_DIR}/#{source}/#{ini\get 'layer', 'filename'}", "#{CONTAINER_DIR}/#{name}"
-			layers=ini\getlist 'machine', 'layers'
-			for i, layer in ipairs layers
-				layers[i]=name if layer==source
-			ini\setlist 'machine', 'layers', layers
+			if ini\hassection 'machine'
+				layers=ini\getlist 'machine', 'layers'
+				for i, layer in ipairs layers
+					layers[i]=name if layer==source
+				ini\setlist 'machine', 'layers', layers
 		
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
