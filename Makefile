@@ -1,4 +1,4 @@
-.PHONY: all clean mrproper rebuild run install
+.PHONY: all clean mrproper rebuild run install docs
 
 NAME = container
 
@@ -34,6 +34,9 @@ install: all
 	$(INSTALL) -o root -g root -m 644 container.cron /etc/cron.d/container
 	$(INSTALL) -o root -g root -m 644 container.service /etc/systemd/system/container.service
 	systemctl enable container.service 2>/dev/null; true
+
+docs: $(BINARY)
+	$(BINARY) -internal-mddoc
 
 clean:
 	$(RM) $(OBJECTS)

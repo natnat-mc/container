@@ -4,7 +4,7 @@ Command=require 'Command'
 State=require 'State'
 
 -- make sure we run in good conditions
-do
+ensureroot=() ->
 	fd=popen 'id', '-u'
 	unless '0'==fd\read '*l'
 		io.stderr\write "Need to run as root\n"
@@ -16,6 +16,7 @@ ensuredir CONTAINER_WORKDIR
 fn=() -> error!
 command=(table.remove arg, 1) or 'help'
 cmd=Command\get command
+ensureroot! unless cmd.noroot
 err=false
 for i, argtype in ipairs cmd.args
 	if argtype.required and not arg[i]

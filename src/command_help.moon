@@ -1,6 +1,7 @@
 Command=require 'Command'
 
 with Command 'help'
+	.noroot=true
 	.args={
 		{'command', required: false}
 	}
@@ -19,6 +20,7 @@ with Command 'help'
 		command=Command\get command
 		io.write "#{command.desc}\n"
 		io.write "#{command\usage!}\n"
+		io.write "*root not required*" if command.noroot
 		if command.help
 			io.write "\n"
 			io.write "#{line}\n" for line in *command.help

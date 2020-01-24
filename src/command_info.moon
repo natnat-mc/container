@@ -2,6 +2,7 @@ import getini from require 'containerutil'
 Command=require 'Command'
 
 with Command 'info'
+	.noroot=true
 	.args={
 		{'name', required: true}
 	}

@@ -2,6 +2,7 @@ import getallini from require 'containerutil'
 Command=require 'Command'
 
 with Command 'list'
+	.noroot=true
 	.args={}
 	.desc="Lists all containers"
 	.help={
@@ -14,7 +15,7 @@ with Command 'list'
 		unless next containers
 			io.write "No containers found\n"
 			return
-		
+
 		-- pretty-print result
 		longestname=0
 		names=[name for name in pairs containers]

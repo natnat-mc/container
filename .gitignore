@@ -3,4 +3,6 @@ Makefile.deps
 build/*.lua
 build/*.c
 build/*.o
+docs/cmd_*.md
 out/container
+
