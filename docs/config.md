@@ -2,23 +2,27 @@
 Note than most functionality is based on `systemd-nspawn`, and some options may not work on older versions
 
 ## `[layer]` section
-- `writable`: boolean  
-- `type`: `ext4|squashfs|directory`  
+- `writable`: boolean
+- `type`: `ext4|squashfs|directory`
 - `filename`: string
 
 ## `[machine]` section
 - `hostname`: string *defaults to the name of the machine*
-- `arch`: string  
+- `arch`: string
 	should be an architecture that can actually run on the host, the script will not check this for you
-- `layers`: list *defaults to the layer of the machine*  
+- `layers`: list *defaults to the layer of the machine*
 	the layers used by this machine, from bottom to top
 - `rootfs`: `layer|tmpfs` *defaults to `layer`*
 - `networking`: `host|private` *defaults to `host`*
 - `capabilities`: `auto|all|list` *defaults to `auto`*
 - `resolv-conf`: `host|container|copy` *defaults to `host`*
 - `timezone`: `host|container|copy` *defaults to `host`*
-- `interactive`: boolean *defaults to true*  
+- `interactive`: boolean *defaults to true*
 	if set to `true`, the container will have a `/dev/console` linked to the terminal, otherwise it will be created but linked nowhere
+- `startcommand`: string *optional*
+	if present, this string will be treated as a command and run when this container is started, but with `$PID` replaced by the PID of init
+- `startnetwork`: list
+	will start all the networks listed when the machine is started
 
 ## `[binds]` section
 The `[binds]` sections maps as key the mountpoint on the container, and as value a string of the format `[+][-]<path>` where:
@@ -36,15 +40,15 @@ The `[capabilities]` section maps as key th name of the capaility and as value `
 ## `[networking]`
 **this section will only be used if the `networking` parameter is set to `private` in the `[machine]` section**
 
-- `interfaces`: list  
+- `interfaces`: list
 	will assign the given interfaces to the container and remove them from the host
-- `macvlan`: list  
+- `macvlan`: list
 	will create `macvlan` from the specified interfaces
-- `ipvlan`: list  
+- `ipvlan`: list
 	will create `ipvlan` from the specified interfaces
-- `veth`: list  
+- `veth`: list
 	will create `veth` interfaces with the specified names
-- `bridge`: string *defaults to none*  
+- `bridge`: string *defaults to none*
 	will create a `veth` interface and bridge it with the specified interface
-- `zone`: string *defaults to none*  
+- `zone`: string *defaults to none*
 	will create a `veth` interface and add it to a bridge with other containers using the same zone

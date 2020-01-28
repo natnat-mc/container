@@ -5,6 +5,8 @@ GlobalConfig=require 'GlobalConfig'
 import try, isin from require 'util'
 import runorerror, ls, umount, mounted, ensuredir, isdir, isfile, pread, preadl, run from require 'exec'
 
+local getini, getallini, mountlayer, mounttmpfs, mergelayers, mountmachine, loaddefaults, checkconfig, nspawnargs, startmachine, hasnetwork, networkstate, confignetwork, networkaddress
+
 -- get a container INI by name
 getini= (name, options={}) ->
 	error "no name given" unless name
@@ -26,14 +28,14 @@ getallini= (matching={}) ->
 -- adds one use to the container
 mountlayer= (name) ->
 	State\lock 'container', name
-	
+
 	-- get layer information
 	ini=getini name, layer: true
 	root="#{CONTAINER_WORKDIR}/layers/#{name}"
 	writable=ini\get 'layer', 'writable'
 	workdir=if writable then "#{root}/workdir" else nil
 	rootfs=if writable then "#{root}/rootfs" else root
-	
+
 	unless mounted root -- mount it if it isn't already
 		ensuredir root
 		t, f=(ini\get 'layer', 'type'), "#{CONTAINER_DIR}/#{name}/#{ini\get 'layer', 'filename'}"
@@ -46,18 +48,18 @@ mountlayer= (name) ->
 				runorerror 'mount', f, root, '-o', "bind,#{writable and 'rw' or 'ro'}"
 			else
 				error "unknown fs type #{t}"
-		
+
 		if writable -- if the layer is writable, we need a workdir and rootfs
 			ensuredir workdir if workdir
 			ensuredir rootfs
-		
+
 		State\use 'container', name
-	
+
 	-- manage layer usage
 	State\unusedfn 'layer', root, () ->
 		umount root
 		State\release 'container', name
-	
+
 	-- return our layer
 	State\unlock 'container', name
 	return {:root, :workdir, :rootfs, :writable}
@@ -70,7 +72,7 @@ mounttmpfs= (name) ->
 	while isdir "#{tmpfsdir}/#{name}-#{i}"
 		i+=1
 	root="#{tmpfsdir}/#{name}-#{i}"
-	
+
 	-- create tmpfs
 	writable=true
 	workdir="#{root}/workdir"
@@ -79,11 +81,11 @@ mounttmpfs= (name) ->
 	runorerror 'mount', '-t', 'tmpfs', "tmpfs-#{name}", root
 	ensuredir workdir
 	ensuredir rootfs
-	
+
 	-- manage layer usage
 	State\unusedfn 'layer', root, () ->
 		umount root
-	
+
 	-- return our tmpfs layer
 	return {:root, :workdir, :rootfs, :writable}
 
@@ -96,7 +98,7 @@ mergelayers= (list, name) ->
 	while isdir "#{mergedir}/#{name}-#{i}"
 		i+=1
 	root="#{mergedir}/#{name}-#{i}"
-	
+
 	-- merge layers
 	ensuredir root
 	if #list==1
@@ -112,13 +114,13 @@ mergelayers= (list, name) ->
 		runorerror 'mount', '-t', 'overlay', 'overlay', root, '-o', options
 		for layer in *list
 			State\use 'layer', layer.root
-	
+
 	-- manage merge usage
 	State\unusedfn 'merge', root, () ->
 		umount root
 		for layer in *list
 			State\release 'layer', layer.root
-	
+
 	-- return our merge root
 	return root
 
@@ -127,12 +129,12 @@ mergelayers= (list, name) ->
 mountmachine= (name) ->
 	-- read machine ini
 	ini=getini name, machine: true
-	
+
 	-- mount all container layers
 	layerdirs={}
 	for layer in *ini\getlist 'machine', 'layers'
 		table.insert layerdirs, mountlayer layer
-	
+
 	-- mount top layer if present
 	switch ini\get 'machine', 'rootfs'
 		when 'layer'
@@ -142,15 +144,15 @@ mountmachine= (name) ->
 			table.insert layerdirs, tmpfs
 		else
 			error "Illegal top layer type"
-	
+
 	-- merge layers
 	rootfs=mergelayers layerdirs, name
 	State\use 'merge', rootfs
-	
+
 	-- manage machine usage
 	State\unusedfn 'machine', rootfs, () ->
 		State\release 'merge', rootfs
-	
+
 	-- return our machine rootfs
 	return rootfs
 
@@ -173,7 +175,7 @@ loaddefaults= (name, ini) ->
 knownvalid={}
 checkconfig= (name, ini, strict=false) ->
 	return if knownvalid[name]
-	
+
 	warn= (m) ->
 		msg="in config for #{name}: #{m}"
 		if strict=='error'
@@ -205,7 +207,7 @@ checkconfig= (name, ini, strict=false) ->
 		for k in pairs ini.sections[s]
 			unless m[k]
 				warn "invalid key #{k} in section #{s}"
-	
+
 	if ini\hassection 'layer'
 		clist 'layer', {'filename', 'type', 'writable'}
 		ctype 'layer', 'writable', 'boolean'
@@ -217,7 +219,7 @@ checkconfig= (name, ini, strict=false) ->
 				error "directory #{fs} doesn't exist" unless isdir fs
 			else
 				error "file #{fs} doesn't exist" unless isfile fs
-	
+
 	if ini\hassection 'machine'
 		clist 'machine', {'hostname', 'arch', 'layers', 'rootfs', 'networking', 'capabilities', 'resolv-conf', 'timezone', 'interactive'}
 		ctype 'machine', 'hostname', 'string'
@@ -238,20 +240,20 @@ checkconfig= (name, ini, strict=false) ->
 		cvals 'machine', 'resolv-conf', {'host', 'copy', 'container'}
 		cvals 'machine', 'timezone', {'host', 'copy', 'container'}
 		ctype 'machine', 'interactive', 'boolean'
-	
+
 	if ini\hassection 'binds'
 		for bind in pairs ini.sections.binds
 			cregm 'binds', bind, '^%+?%-?/.*'
-	
+
 	if ini\hassection 'capabilities'
 		warn "unused section capabilities" unless 'list'==ini\get 'machine', 'capabilities'
 		for capability in pairs ini.sections.capabilities
 			cvals 'capabilities', capability, {'grant', 'drop'}
-	
+
 	if ini\hassection 'networking'
 		warn "unused section networking" unless 'private'==ini\get 'machine', 'networking'
 		clist 'networking', {'interfaces', 'macvlan', 'ipvlan', 'veth', 'bridge', 'zone'}
-	
+
 	knownvalid[name]=true
 
 
@@ -260,7 +262,7 @@ nspawnargs= (name, ini, machine, ...) ->
 	-- build the nspawn command
 	args={}
 	push= (arg) -> table.insert args, arg
-	
+
 	do -- use the machine rootfs
 		push '-D'
 		push machine
@@ -324,7 +326,7 @@ nspawnargs= (name, ini, machine, ...) ->
 
 startmachine= (name) ->
 	error "Already running" if State\machinerunning name
-	
+
 	screendir="/run/screen/S-#{preadl 'whoami'}"
 	screenname="container-#{name}"
 	runorerror 'screen', '-dmS', screenname, arg[0], 'boot', name
@@ -337,11 +339,11 @@ startmachine= (name) ->
 			break
 	unless screenpid
 		error "Screen didn't start"
-	
+
 	scriptpid=tonumber preadl 'pgrep', '-P', screenpid
 	unless scriptpid
 		error "Script didn't start"
-	
+
 	nspawnpid=try delay: 1, times: 5, fn: () ->
 		shpid=tonumber preadl 'pgrep', '-P', scriptpid
 		error! unless shpid
@@ -350,14 +352,21 @@ startmachine= (name) ->
 		return pid
 	unless nspawnpid
 		error "systemd-nspawn didn't start"
-	
+
 	initpid=try delay: 1, times: 5, fn: () ->
 		pid=tonumber preadl 'pgrep', '-P', nspawnpid
 		error! unless pid
 		return pid
 	unless initpid
 		error "Init didn't start"
-	
+
+	ini=getini name
+	startcommand=ini\get 'machine', 'startcommand'
+	run startcommand\gsub '%$PID', initpid if startcommand
+	startnetwork=ini\getlist 'machine', 'startnetwork'
+	for net in *startnetwork
+		pcall confignetwork, net
+
 	State\addrunningmachine name, initpid
 	return initpid
 
