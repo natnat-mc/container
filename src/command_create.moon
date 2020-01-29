@@ -1,4 +1,5 @@
-import pread, ensuredir, isdir from require 'exec'
+import pread, ensuredir from require 'exec'
+import isdir from require 'posix'
 require 'env'
 INI=require 'INI'
 Command=require 'Command'
@@ -20,14 +21,14 @@ with Command 'create'
 		ini\set 'layer', 'writable', true
 		ini\set 'machine', 'arch', (pread 'arch')[1]
 		ini\set 'machine', 'layers', name
-		
+
 		-- create destination directories
 		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir/rootfs"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir/workdir"
-		
+
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		return 0

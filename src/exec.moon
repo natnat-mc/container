@@ -1,4 +1,5 @@
 require 'env'
+import isdir from require 'posix'
 
 escape= (str) ->
 	'\"'..(tostring str)\gsub('\\', '\\\\')\gsub('\'', '\\\'')\gsub('\"', '\\\"')..'\"'
@@ -31,10 +32,6 @@ preadl= (prog, ...) ->
 	fd\close!
 	return line
 
-exists= (file) -> run '[', '-e', file, ']'
-isfile= (file) -> run '[', '-f', file, ']'
-isdir= (file) -> run '[', '-d', file, ']'
-
 ls= (dir) ->
 	fd=popen 'ls', '-1', dir
 	files=[line for line in fd\lines!]
@@ -65,7 +62,7 @@ getsystemdversion= () ->
 {
 	:run, :runorerror
 	:popen, :pread, :preadl
-	:exists, :isfile, :isdir, :ls
+	:ls
 	:mkdir, :ensuredir
 	:mounted, :umount
 	:getsystemdversion

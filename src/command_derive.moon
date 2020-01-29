@@ -1,5 +1,6 @@
 import getini from require 'containerutil'
-import ensuredir, isdir from require 'exec'
+import ensuredi from require 'exec'
+import isdir from require 'posix'
 require 'env'
 Command=require 'Command'
 
@@ -16,7 +17,7 @@ with Command 'derive'
 	.fn= (source, name) ->
 		-- load container config
 		ini=getini source, machine: true
-		
+
 		-- derive config file
 		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
 		ini\set 'layer', 'filename', 'layer.dir'
@@ -24,7 +25,7 @@ with Command 'derive'
 		ini\set 'layer', 'writable', true
 		ini\set 'machine', 'rootfs', 'layer'
 		ini\append 'machine', 'layers', name
-		
+
 		-- create new container
 		ensuredir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}/layer.dir"

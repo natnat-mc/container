@@ -1,5 +1,6 @@
 import getini from require 'containerutil'
-import ensuredir, runorerror, isdir from require 'exec'
+import ensuredir, runorerror from require 'exec'
+import isdir from require 'posix'
 require 'env'
 State=require 'State'
 Command=require 'Command'
@@ -20,11 +21,11 @@ with Command 'clone'
 		ini=getini source
 		State\lock 'container', source
 		error "Container is in use" unless 0==State\uses 'container', source
-		
+
 		-- create destination directory
 		error "Container #{name} already exists" if isdir "#{CONTAINER_DIR}/#{name}"
 		ensuredir "#{CONTAINER_DIR}/#{name}"
-		
+
 		-- clone source layer if present
 		if ini\hassection 'layer'
 			runorerror 'cp', '-a', "#{CONTAINER_DIR}/#{source}/#{ini\get 'layer', 'filename'}", "#{CONTAINER_DIR}/#{name}"
@@ -33,7 +34,7 @@ with Command 'clone'
 				for i, layer in ipairs layers
 					layers[i]=name if layer==source
 				ini\setlist 'machine', 'layers', layers
-		
+
 		-- write config file
 		ini\export "#{CONTAINER_DIR}/#{name}/config.ini"
 		State\unlock 'container', source

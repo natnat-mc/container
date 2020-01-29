@@ -3,7 +3,8 @@ INI=require 'INI'
 State=require 'State'
 GlobalConfig=require 'GlobalConfig'
 import try, isin from require 'util'
-import runorerror, ls, umount, mounted, ensuredir, isdir, isfile, pread, preadl, run from require 'exec'
+import runorerror, ls, umount, mounted, ensuredir, pread, preadl, run from require 'exec'
+import isdir, isfile from require 'posix'
 
 local getini, getallini, mountlayer, mounttmpfs, mergelayers, mountmachine, loaddefaults, checkconfig, nspawnargs, startmachine, hasnetwork, networkstate, confignetwork, networkaddress
 
