@@ -42,6 +42,8 @@ elseif cmd.cli -- new-style commands
 		io.stderr\write err, '\n'
 	else
 		ok, err=pcall cmd.fn, args
+		unless ok
+			io.stderr\write err, '\n'
 
 else -- uhh, wat?
 	ok=false

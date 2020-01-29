@@ -5,7 +5,7 @@ class Command
 		return @commands[name] if @commands[name]
 		ok, err=pcall require, "command_#{name}"
 		unless ok
-			error "No such command #{name}"
+			error "No such command #{name}: #{err}"
 		return @commands[name]
 
 	@loadcommands: () =>
