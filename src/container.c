@@ -2,7 +2,7 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-void bundle_init(lua_State* L);
+#include "cmodules.h"
 
 int main(int argc, char** argv) {
         // create a Lua state
@@ -11,6 +11,9 @@ int main(int argc, char** argv) {
 
         // allow loading from our bundle
         bundle_init(L);
+
+		// allow loading from our modules
+		cmodules_init(L);
 
         // load argc/argv into arg global
         lua_newtable(L);
