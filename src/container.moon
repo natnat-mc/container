@@ -13,24 +13,41 @@ ensureroot=() ->
 ensuredir CONTAINER_WORKDIR
 
 -- run the right command according to script args
-fn=() -> error!
 command=(table.remove arg, 1) or 'help'
 cmd=Command\get command
 ensureroot! unless cmd.noroot
-err=false
-for i, argtype in ipairs cmd.args
-	if argtype.required and not arg[i]
-		io.write "Missing required argument #{argtype[1]}\n"
-		err=true
-unless err
-	fn=cmd.fn
+local ok, err
+if cmd.args -- old-style commands
+	fn=() -> error!
+	err=false
+	for i, argtype in ipairs cmd.args
+		if argtype.required and not arg[i]
+			io.write "Missing required argument #{argtype[1]}\n"
+			err=true
+	unless err
+		fn=cmd.fn
+	ok, err=pcall fn, (table.unpack or unpack) arg
+	unless ok
+		if err
+			io.stderr\write err
+			io.stderr\write '\n'
 
--- run the actual function and cleanup
-ok, err=pcall fn, (table.unpack or unpack) arg
-unless ok
-	if err
-		io.stderr\write err
-		io.stderr\write '\n'
+elseif cmd.cli -- new-style commands
+	CLI=require 'CLI'
+	cli=CLI cmd.cli
+	local args
+	ok, err=pcall ->
+		args=cli\parse arg
+	unless ok
+		io.stderr\write err, '\n'
+	else
+		ok, err=pcall cmd.fn, args
+
+else -- uhh, wat?
+	ok=false
+	err=1
+	io.stderr\write "Found command without args and without cli\n"
+
 State\cleanup!
 if ok
 	if 'number'==type err
