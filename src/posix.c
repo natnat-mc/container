@@ -68,6 +68,10 @@ static int posix_isfile(lua_State *L) {
 	const char* pathname=luaL_checkstring(L, 1);
 	struct stat statbuf;
 	if(stat(pathname, &statbuf)) {
+		if(errno==ENOENT || errno==ENOTDIR) {
+			lua_pushboolean(L, 0);
+			return 1;
+		}
 		luaL_error(L, strerror(errno));
 	}
 	lua_pushboolean(L, statbuf.st_mode&S_IFREG);
@@ -78,6 +82,10 @@ static int posix_isdir(lua_State *L) {
 	const char* pathname=luaL_checkstring(L, 1);
 	struct stat statbuf;
 	if(stat(pathname, &statbuf)) {
+		if(errno==ENOENT || errno==ENOTDIR) {
+			lua_pushboolean(L, 0);
+			return 1;
+		}
 		luaL_error(L, strerror(errno));
 	}
 	lua_pushboolean(L, statbuf.st_mode&S_IFDIR);
