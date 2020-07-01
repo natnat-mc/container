@@ -361,9 +361,11 @@ startmachine= (name) ->
 	unless initpid
 		error "Init didn't start"
 
+	rootdir = "#{CONTAINER_WORKDIR}/merge/#{name}-0"
+
 	ini=getini name
 	startcommand=ini\get 'machine', 'startcommand'
-	run startcommand\gsub '%$PID', initpid if startcommand
+	run startcommand\gsub('%$PID', initpid)\gsub('%$ROOT', rootdir) if startcommand
 	startnetwork=ini\getlist 'machine', 'startnetwork'
 	for net in *startnetwork
 		pcall confignetwork, net
