@@ -28,8 +28,11 @@ with Command 'boot'
 			-- get our nspawn arguments
 			args=nspawnargs name, ini, machine, '-b'
 			
+			-- get env variables for systemd
+			env=ini\getlist 'machine', 'env'
+			
 			-- boot our container
-			runorerror 'systemd-nspawn', args
+			runorerror "env #{table.concat env, ' '} systemd-nspawn", args
 		
 		-- release our machine
 		State\release 'machine', machine
