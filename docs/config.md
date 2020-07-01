@@ -20,9 +20,11 @@ Note than most functionality is based on `systemd-nspawn`, and some options may 
 - `interactive`: boolean *defaults to true*
 	if set to `true`, the container will have a `/dev/console` linked to the terminal, otherwise it will be created but linked nowhere
 - `startcommand`: string *optional*
-	if present, this string will be treated as a command and run when this container is started, but with `$PID` replaced by the PID of init
+	if present, this string will be treated as a command and run when this container is started, but with `$PID` replaced by the PID of init and `$ROOT` replaced by the container's root
 - `startnetwork`: list
 	will start all the networks listed when the machine is started
+- `env`: list
+	additional env variables to pass to systemd-nspawn
 
 ## `[binds]` section
 The `[binds]` sections maps as key the mountpoint on the container, and as value a string of the format `[+][-]<path>` where:
