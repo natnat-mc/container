@@ -1,5 +1,5 @@
 import getini from require 'containerutil'
-import ensuredi from require 'exec'
+import ensuredir from require 'exec'
 import isdir from require 'posix'
 require 'env'
 Command=require 'Command'
