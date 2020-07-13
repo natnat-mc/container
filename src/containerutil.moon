@@ -332,12 +332,14 @@ startmachine= (name) ->
 	screenname="container-#{name}"
 	runorerror 'screen', '-dmS', screenname, arg[0], 'boot', name
 	local screenpid
-	for screen in *ls screendir
-		local name
-		pid, name=screen\match "(%d+)%.(%S+)"
-		if screenname==name
-			screenpid=pid
-			break
+	try delay: 1, times: 5, fn: () ->
+		for screen in *ls screendir
+			local name
+			pid, name=screen\match "(%d+)%.(%S+)"
+			if screenname==name
+				screenpid=pid
+				break
+		error! unless screenpid
 	unless screenpid
 		error "Screen didn't start"
 
