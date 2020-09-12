@@ -5,6 +5,7 @@ Description=Lightweight container script
 User=root
 Group=root
 ExecStart=/usr/local/sbin/container -internal-atboot
+ExecStop=/usr/local/sbin/container stop-all
 Type=oneshot
 CapabilityBoundingSet=~
 ProtectSystem=no
