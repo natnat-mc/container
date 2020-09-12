@@ -53,5 +53,7 @@ target BINARY, from: {OBJECTS, BUNDLE_O}, out: BINARY, fn: =>
 target 'build/%.lua', in: 'src/%.moon', out: 'build/%.lua', fn: =>
 	-moonc '-o', @outfile, @infile
 
-target 'build/%.o', in: 'src/%.c', out: 'build/%.o', fn: =>
-	-cc CFLAGS, '-c', @infile, '-o', @outfile
+foreach C_SOURCES, (src) ->
+	obj=patsubst src, 'src/%.c', 'build/%.o'
+	target obj, in: {src, calccdeps src}, out: obj, fn: =>
+		-cc CFLAGS, '-c', @infile, '-o', @outfile
