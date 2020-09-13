@@ -1,7 +1,7 @@
 NAME = "container"
 
-LUA_CFLAGS = splitsp (popen "pkg-config", {"lua5.3", "--cflags"})\read '*l'
-LUA_LDFLAGS = splitsp (popen "pkg-config", {"lua5.3", "--libs"})\read '*l'
+LUA_CFLAGS = findclib 'lua5.3', 'cc'
+LUA_LDFLAGS = findclib 'lua5.3', 'ld'
 
 CFLAGS = {"-Wall", "-Wextra", "-g", LUA_CFLAGS}
 LDFLAGS = {LUA_LDFLAGS}
