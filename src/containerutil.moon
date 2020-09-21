@@ -332,7 +332,7 @@ startmachine= (name) ->
 	screenname="container-#{name}"
 	runorerror 'screen', '-dmS', screenname, arg[0], 'boot', name
 	local screenpid
-	try delay: 2, times: 10, fn: () ->
+	try delay: 5, times: 10, fn: () ->
 		for screen in *ls screendir
 			local name
 			pid, name=screen\match "(%d+)%.(%S+)"
@@ -347,7 +347,7 @@ startmachine= (name) ->
 	unless scriptpid
 		error "Script didn't start"
 
-	nspawnpid=try delay: 2, times: 10, fn: () ->
+	nspawnpid=try delay: 5, times: 10, fn: () ->
 		shpid=tonumber preadl 'pgrep', '-P', scriptpid
 		error! unless shpid
 		pid=tonumber preadl 'pgrep', '-P', shpid
@@ -356,7 +356,7 @@ startmachine= (name) ->
 	unless nspawnpid
 		error "systemd-nspawn didn't start"
 
-	initpid=try delay: 2, times: 10, fn: () ->
+	initpid=try delay: 5, times: 10, fn: () ->
 		pid=tonumber preadl 'pgrep', '-P', nspawnpid
 		error! unless pid
 		return pid
