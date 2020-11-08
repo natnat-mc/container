@@ -1,59 +1,85 @@
-NAME = "container"
+public var 'NAME', "container"
 
-LUA_CFLAGS = findclib 'lua5.3', 'cc'
-LUA_LDFLAGS = findclib 'lua5.3', 'ld'
+var 'CC', 'gcc'
+var 'LD', 'gcc'
+var 'MOONC', 'moonc'
+var 'INSTALLX', 'install', '-o', 'root', '-g', 'root', '-m', '755'
+var 'INSTALLR', 'install', '-o', 'root', '-g', 'root', '-m', '644'
+var 'RM', 'rm', '-f', '--'
 
-CFLAGS = {"-Wall", "-Wextra", "-g", LUA_CFLAGS}
-LDFLAGS = {LUA_LDFLAGS}
+var 'CFLAGS', '-Wall', '-Wextra', '-g', _.pkgconfig.cflags 'lua5.3'
+var 'LDFLAGS', _.pkgconfig.libs 'lua5.3'
 
-MOON_SOURCES = wildcard 'src/*.moon'
-LUA_OBJECTS = patsubst MOON_SOURCES, 'src/%.moon', 'build/%.lua'
+var 'MOON_SOURCES', _.wildcard 'src/**.moon'
+var 'LUA_OBJECTS', _.patsubst MOON_SOURCES, 'src/%.moon', 'build/%.lua'
 
-C_SOURCES = wildcard 'src/*.c'
-OBJECTS = patsubst C_SOURCES, 'src/%.c', 'build/%.o'
+var 'C_SOURCES', _.wildcard 'src/**.c'
+var 'C_OBJECTS', _.patsubst C_SOURCES, 'src/%.c', 'build/%.o'
 
-CMD_LIST = 'build/command-list.lua'
-BUNDLE_C = 'build/bundle.c'
-BUNDLE_O = 'build/bundle.o'
+var 'CMD_LIST', 'build/command-list.lua'
+var 'BUNDLE_C', 'build/bundle.c'
+var 'BUNDLE_O', 'build/bundle.o'
+var 'C_OBJECTS', C_OBJECTS, BUNDLE_O
 
-BINARY = "out/#{NAME}"
+var 'BINARY', "out/#{NAME}"
 
-public default target 'build', deps: BINARY
+with public default target 'all'
+	\depends BINARY
 
-public target 'clean', fn: =>
-	-rm '-f', OBJECTS
-	-rm '-f', LUA_OBJECTS
-	-rm '-f', CMD_LIST, BUNDLE_C, BUNDLE_O
+with public target 'clean'
+	\fn => _.cmd RM, LUA_OBJECTS
+	\fn => _.cmd RM, C_OBJECTS
+	\fn => _.cmd RM, CMD_LIST, BUNDLE_C
 
-public target 'mrproper', deps: 'clean', fn: =>
-	-rm '-f', BINARY
+with public target 'mrproper'
+	\after 'clean'
+	\fn => _.cmd RM, BINARY
 
-public target 'docs', deps: BINARY, fn: =>
-	run BINARY, '-internal-mddoc'
+with public target 'docs'
+	\depends BINARY
+	\fn => _.cmd BINARY, '-internal-mddoc'
 
-public target 'install', deps: BINARY, fn: =>
-	-install '-o', 'root', '-g', 'root', '-m', '755', BINARY, '/usr/local/sbin/container'
-	-install '-o', 'root', '-g', 'root', '-m', '644', 'container.cron', '/etc/cron.d/container'
-	-install '-o', 'root', '-g', 'root', '-m', '644', 'container.service', '/etc/systemd/system/container.service'
-	run 'systemctl', {'enable', 'container.service', {raw: '2>/dev/null; true'}}
+with public target 'install'
+	\depends BINARY
+	\depends 'container.cron'
+	\depends 'container.service'
+	\produces "/usr/local/sbin/#{NAME}"
+	\produces "/etc/cron.d/#{NAME}"
+	\produces "/etc/systemd/system.#{NAME}.service"
+	\fn => _.cmd INSTALLX, BINARY, "/usr/local/sbin/#{NAME}"
+	\fn => _.cmd INSTALLR 'container.cron', "/etc/cron.d/#{NAME}"
+	\fn => _.cmd INSTALLR 'container.service', "/etc/systemd/system/#{NAME}.service"
 
-target CMD_LIST, from: {LUA_OBJECTS}, in: 'tools/lister.moon', out: CMD_LIST, fn: =>
-	-moon 'tools/lister.moon', @outfile
+with target CMD_LIST
+	\depends LUA_OBJECTS
+	\depends 'tools/lister.moon'
+	\produces CMD_LIST
+	\fn => _.cmd 'moon', 'tools/lister.moon', @outfile
 
-target BUNDLE_C, from: {LUA_OBJECTS, CMD_LIST}, in: 'tools/bundle.lua', out: BUNDLE_C, fn: =>
-	-lua 'tools/bundle.lua', @outfile, LUA_OBJECTS, CMD_LIST
+with target BUNDLE_C
+	\depends LUA_OBJECTS
+	\depends CMD_LIST
+	\depends 'tools/bundle.lua'
+	\produces BUNDLE_C
+	\fn => _.cmd 'lua', 'tools/bundle.lua', @outfile, LUA_OBJECTS, CMD_LIST
 
-target BUNDLE_O, from: BUNDLE_C, out: BUNDLE_O, fn: =>
-	-cc CFLAGS, '-c', @infile, '-o', @outfile
+with target C_OBJECTS, pattern: 'build/%.o'
+	\depends 'src/%.c'
+	\depends => _.cdeps[CC] @infile, CFLAGS
+	\produces 'build/%.o'
+	\fn => _.cmd CC, CFLAGS, '-c', @infile, '-o', @outfile
 
-target BINARY, from: {OBJECTS, BUNDLE_O}, out: BINARY, fn: =>
-	-cc '-o', @outfile, @ins, LDFLAGS
+with target LUA_OBJECTS, pattern: 'build/%.lua'
+	\depends 'src/%.moon'
+	\produces 'build/%.lua'
+	\fn => _.moonc @infile, @outfile
 
--- autobuild
-target 'build/%.lua', in: 'src/%.moon', out: 'build/%.lua', fn: =>
-	-moonc '-o', @outfile, @infile
+with target BUNDLE_O
+	\depends BUNDLE_C
+	\produces BUNDLE_O
+	\fn => _.cmd CC, CFLAGS, '-c', @infile, '-o', @outfile
 
-foreach C_SOURCES, (src) ->
-	obj=patsubst src, 'src/%.c', 'build/%.o'
-	target obj, in: {src, calccdeps src}, out: obj, fn: =>
-		-cc CFLAGS, '-c', @infile, '-o', @outfile
+with target BINARY
+	\depends C_OBJECTS
+	\produces BINARY
+	\fn => _.cmd LD, '-o', @outfile, @infiles, LDFLAGS

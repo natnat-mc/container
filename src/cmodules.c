@@ -18,11 +18,13 @@ int cmodules_import(lua_State *L) {
 }
 
 void cmodules_init(lua_State *L) {
-	lua_checkstack(L, 3);
+	lua_checkstack(L, 5);
+	lua_getglobal(L, "table");
 	lua_getglobal(L, "package");
-	lua_getfield(L, -1, "searchers");
-	int len=luaL_len(L, -1);
+	lua_getfield(L, -2, "insert");
+	lua_getfield(L, -2, "searchers");
+	lua_pushnumber(L, 1);
 	lua_pushcfunction(L, cmodules_import);
-	lua_seti(L, -2, len+1);
-	lua_pop(L, 2);
+	lua_call(L, 3, 0);
+	lua_pop(L, 3);
 }
