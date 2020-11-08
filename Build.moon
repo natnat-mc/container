@@ -47,8 +47,8 @@ with public target 'install'
 	\produces "/etc/cron.d/#{NAME}"
 	\produces "/etc/systemd/system.#{NAME}.service"
 	\fn => _.cmd INSTALLX, BINARY, "/usr/local/sbin/#{NAME}"
-	\fn => _.cmd INSTALLR 'container.cron', "/etc/cron.d/#{NAME}"
-	\fn => _.cmd INSTALLR 'container.service', "/etc/systemd/system/#{NAME}.service"
+	\fn => _.cmd INSTALLR, 'container.cron', "/etc/cron.d/#{NAME}"
+	\fn => _.cmd INSTALLR, 'container.service', "/etc/systemd/system/#{NAME}.service"
 
 with target CMD_LIST
 	\depends LUA_OBJECTS
