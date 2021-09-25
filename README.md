@@ -3,7 +3,7 @@ This is a simple container script, to make `systemd-nspawn` more usable.
 This script also adds layering capabilities using `overlayfs2` (like Docker).
 
 ## Usage
-This script expects containers in `/sys/containers` (or `$CONTAINER_DIR`) as directories containing a `config.ini` file. It also uses a global config file in `$CONTAINER_DIR/globalconfig.ini`.
+This script expects containers in `/srv/containers` (or `$CONTAINER_DIR`) as directories containing a `config.ini` file. It also uses a global config file in `$CONTAINER_DIR/globalconfig.ini`.
 
 For more information on the commands, see `container help` and the Markdown documentation.
 
