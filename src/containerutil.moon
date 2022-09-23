@@ -130,6 +130,7 @@ mergelayers= (list, name) ->
 mountmachine= (name) ->
 	-- read machine ini
 	ini=getini name, machine: true
+	loaddefaults name, ini
 
 	-- mount all container layers
 	layerdirs={}
